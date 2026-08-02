@@ -33,15 +33,18 @@ icon on the extension card.
 npm run dev        # esbuild watch, unminified with inline sourcemaps
 npm run build      # minified production build into dist/
 npm run typecheck  # tsc --noEmit
+npm run serve      # dev server for the harness (http :8731, https :8732)
+npm run fixture    # one-off: put a real .webm at .fixtures/clip.webm
+npm run e2e        # drive the built extension in a throwaway browser
 npm run icons      # regenerate public/icons/*.png
 ```
 
 ### The dev harness
 
 `dev/index.html` reproduces Instagram's structure — a wrapper holding the video plus click-catcher
-and control siblings stacked on top — without needing to be logged in. It stubs the media clock
-(`duration`, `currentTime`, `paused`, `buffered`, `play()`, `pause()`) so behaviour is
-deterministic and no video codec is involved, and leaves `volume`/`muted` native.
+and control siblings stacked on top — without needing to be logged in. It also renders a post
+modal over a still-mounted feed, whose video is deliberately **larger** in area than the feed one,
+so a hit test that picks the smallest match chooses wrong.
 
 It carries a **leak log**: the wrapper has its own click handlers, and any event escaping our
 control bar into them shows up as `LEAK:`. Clicking the video body (not the bar) must produce leak
@@ -49,16 +52,32 @@ entries — that is the negative control proving the detector works. Clicking th
 none.
 
 ```sh
-npm run build
-mkdir -p .serve && cp dev/index.html .serve/ && cp dist/content.js dist/content.css .serve/
-cd .serve && python3 -m http.server 8731
+npm run build && npm run fixture
+npm run serve
 ```
 
 Open <http://localhost:8731/>. It must be served from the path `/` — the extension resolves the
-surface from `location.pathname`, and `/` is what makes it read as the feed.
+surface from `location.pathname`, and `/` is what makes it read as the feed. The server reads
+`dist/` on every request, so a rebuild needs no copy step.
 
 `window.__probe()` returns the bar's state (rect, visibility, parent, displayed time, leaks) for
 scripted checks.
+
+### The end-to-end check
+
+The harness runs the bundle as an ordinary page script. That is **not** the environment the
+extension ships into: no isolated world, no `chrome.storage`, no manifest-injected CSS, no match
+patterns. `npm run e2e` closes that gap — it launches a throwaway Brave with `dist/` loaded
+unpacked, points `*.instagram.com` at the local server with `--host-resolver-rules`, and drives it
+over CDP. Add `--headful` to watch it happen.
+
+It covers what only the real artifact can show: injection via the match pattern,
+`adoptedStyleSheets` under the extension's CSP, the manifest CSS, fullscreen end to end, event
+isolation, and a `chrome.storage.sync` round trip across a reload.
+
+It deliberately does **not** test the render loop's frame-parking: that is measured by patching
+`requestAnimationFrame`, which the isolated world does not share, so it would always read zero and
+look like a pass. That check lives in the localhost harness. See `LESSONS.md` §6.
 
 ## How it works
 

@@ -108,3 +108,43 @@ these are the ones worth remembering as rules.
 - **5.6 An event loop that never parks is a leak with no leak.** One hover left a
   `getBoundingClientRect()` plus five `!important` style writes running every frame for the life of
   the page, because leaving the video calls `hide()` and only `detach()` stopped the loop.
+
+## §6 — The harness is not the extension
+
+Everything above was proven with the bundle running as an ordinary page script. Loading `dist/` as
+a real unpacked extension (`npm run e2e`) broke four checks that had been green, and none of the
+breakages were in the extension.
+
+- **6.1 An isolated world does not see properties shadowed onto DOM elements from the page.** The
+  harness faked a media clock with `Object.defineProperty(video, 'duration', …)`. Content scripts
+  get their own JS wrappers for the same DOM nodes, so the extension saw a real source-less
+  `<video>`: `duration` NaN, `play()` rejecting, `paused` stuck true. Every playback check failed
+  while the code was correct. **Only genuine DOM state crosses the boundary** — `muted` and
+  `volume` did work, which is exactly why the failure looked selective and confusing. The harness
+  now serves a real `.webm`.
+
+- **6.2 You cannot measure an extension's `requestAnimationFrame` from the page.** Each world has
+  its own `window`, so patching the page's `requestAnimationFrame` counts nothing the content
+  script does — and reads **zero**, which is indistinguishable from "the loop is correctly parked".
+  ⭐ A cross-world measurement that can only ever return the passing value is worse than no
+  measurement. That check is now scoped to the localhost harness and says so.
+
+- **6.3 `instagram.com` is on Chromium's HSTS preload list.** `http://www.instagram.com` is
+  upgraded to HTTPS before any command-line flag is consulted — `--disable-features=…` does not
+  help — so a plain-HTTP test server answers `ERR_SSL_PROTOCOL_ERROR`. The dev server speaks TLS
+  with a self-signed cert and the browser is launched with `--ignore-certificate-errors`.
+
+- **6.4 Without HTTP Range support, `currentTime` assignments are silently clamped.** The seek
+  click landed, the handler ran, `video.currentTime = 22.3` executed — and the video stayed at
+  0.2s, because the browser will not seek outside `seekable`, and a server that ignores `Range`
+  never makes the clip seekable. No error anywhere. ⭐ The check now asserts the clip is seekable
+  *before* scrubbing, so this can never again present as "seeking is broken".
+
+- **6.5 Hovering is not a user gesture.** After a reload the stored unmute preference is correctly
+  not applied until the tab has been activated, because unmuting without activation makes Chrome's
+  autoplay policy stop the video. The first version of the test hovered and expected sound; the
+  test was wrong, not the code. Assert the *designed* behaviour, which here is two-stage: muted
+  until a gesture, unmuted after one.
+
+- **6.6 `--headless=new` reports `visibilityState: "visible"`.** Every rAF-dependent check that was
+  unmeasurable through the automation extension (§3.1) simply works in a browser the test owns.

@@ -7,6 +7,9 @@
   "scripts": {
     "build": "node build.mjs",
     "dev": "node build.mjs --watch",
+    "serve": "node scripts/serve.mjs",
+    "fixture": "node scripts/fixture.mjs",
+    "e2e": "node scripts/e2e.mjs",
     "icons": "node scripts/gen-icons.mjs",
     "typecheck": "tsc --noEmit"
   },

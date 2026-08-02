@@ -33,21 +33,12 @@
         height: 600px;
         background: #000;
       }
-      .media video,
-      .media .frame {
+      .media video {
         position: absolute;
         inset: 0;
         width: 100%;
         height: 100%;
-      }
-      /* Stands in for decoded frames so seeking is visible in a screenshot. */
-      .frame {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font: bold 72px ui-monospace, monospace;
-        color: #fff;
-        background: #22304a;
+        object-fit: contain;
       }
       .catcher { position: absolute; inset: 0; z-index: 5; cursor: pointer; }
       .ig-mute {
@@ -62,7 +53,9 @@
         cursor: pointer;
       }
 
-      /* The post modal, which Instagram renders OVER a still-mounted feed. */
+      /* The post modal, which Instagram renders OVER a still-mounted feed.
+         Its video is deliberately LARGER in area than the feed one, so a hit
+         test that picks the smallest match chooses wrong. */
       #modal {
         display: none;
         position: fixed;
@@ -89,13 +82,12 @@
     </style>
   </head>
   <body>
-    <div id="status">ready</div>
+    <div id="status">loading clip…</div>
     <div id="spacer"></div>
 
     <div class="post">
       <div class="media" id="media">
-        <div class="frame" id="frame">0.0s</div>
-        <video id="v" playsinline></video>
+        <video id="v" src="/clip.webm" preload="auto" playsinline></video>
         <div class="catcher" id="catcher"></div>
         <button class="ig-mute" id="igmute">M</button>
       </div>
@@ -103,17 +95,16 @@
 
     <div id="log">leak log (must stay empty when clicking our bar)</div>
 
-    <!-- Larger in area than the feed video on purpose: a hit test that picks
-         the smallest match would choose the wrong one. -->
     <div id="modal">
       <div class="media" id="media2">
-        <div class="frame" id="frame2">0.0s</div>
-        <video id="v2" playsinline></video>
+        <video id="v2" src="/clip.webm" preload="auto" playsinline></video>
         <div class="catcher" id="catcher2"></div>
       </div>
     </div>
 
     <script>
+      const v = document.getElementById("v");
+      const v2 = document.getElementById("v2");
       const log = (msg) => {
         document.getElementById("log").textContent += "\n" + msg;
         console.log("[harness]", msg);
@@ -126,69 +117,28 @@
       document.addEventListener("keydown", () => log("LEAK: document keydown"));
       document.getElementById("igmute").addEventListener("click", (e) => {
         e.stopPropagation();
-        const v = document.getElementById("v");
         v.muted = !v.muted;
         log("IG mute button -> muted=" + v.muted);
       });
 
-      // --- Fake media clock -------------------------------------------------
-      // Brave will not decode a MediaRecorder blob, and a real codec is not what
-      // we are testing. The extension only ever touches duration / currentTime /
-      // paused / buffered / play() / pause() and the matching events, so we
-      // shadow exactly those and leave volume + muted native.
-      function fakeClock(v, frame, DURATION) {
-        let time = 0, paused = true, ticker = null;
-        const def = (name, desc) => Object.defineProperty(v, name, { configurable: true, ...desc });
-        const render = () => {
-          frame.textContent = time.toFixed(1) + "s";
-          frame.style.background = `hsl(${Math.round((time / DURATION) * 300)} 45% 28%)`;
-        };
+      // Real media, deliberately. duration / currentTime / paused are DOM state
+      // and are therefore visible to the extension's isolated world; properties
+      // shadowed onto the element from here would not be (LESSONS §6.1).
+      const ready = (el) =>
+        el.readyState >= 1
+          ? Promise.resolve()
+          : new Promise((res) => {
+              el.addEventListener("loadedmetadata", res, { once: true });
+              el.addEventListener("error", res, { once: true });
+            });
 
-        def("duration", { get: () => DURATION });
-        def("paused", { get: () => paused });
-        def("readyState", { get: () => 4 });
-        def("buffered", { get: () => ({ length: 1, start: () => 0, end: () => Math.min(DURATION, time + 6) }) });
-        def("currentTime", {
-          get: () => time,
-          set: (t) => {
-            time = Math.min(DURATION, Math.max(0, Number(t) || 0));
-            render();
-            v.dispatchEvent(new Event("seeking"));
-            v.dispatchEvent(new Event("seeked"));
-            v.dispatchEvent(new Event("timeupdate"));
-          },
-        });
-        def("play", {
-          value: () => {
-            if (!paused) return Promise.resolve();
-            paused = false;
-            v.dispatchEvent(new Event("play"));
-            v.dispatchEvent(new Event("playing"));
-            ticker = setInterval(() => {
-              time = Math.min(DURATION, time + 0.1);
-              render();
-              v.dispatchEvent(new Event("timeupdate"));
-              if (time >= DURATION) v.pause();
-            }, 100);
-            return Promise.resolve();
-          },
-        });
-        def("pause", {
-          value: () => {
-            if (paused) return;
-            paused = true;
-            clearInterval(ticker);
-            v.dispatchEvent(new Event("pause"));
-          },
-        });
-
-        render();
-        v.dispatchEvent(new Event("loadedmetadata"));
-        return { reset: () => { time = 0; paused = true; clearInterval(ticker); render(); } };
-      }
-
-      const feed = fakeClock(document.getElementById("v"), document.getElementById("frame"), 30);
-      const modal = fakeClock(document.getElementById("v2"), document.getElementById("frame2"), 12);
+      window.__ready = Promise.all([ready(v), ready(v2)]).then(() => {
+        const ok = v.readyState >= 1 && v2.readyState >= 1;
+        document.getElementById("status").textContent = ok
+          ? `clip ready — ${v.duration.toFixed(2)}s. Hover the video.`
+          : "CLIP FAILED TO LOAD — run: npm run fixture";
+        return ok;
+      });
 
       // --- Driver hooks -----------------------------------------------------
       window.__openModal = () => document.getElementById("modal").classList.add("open");
@@ -196,13 +146,12 @@
       window.__setSpacer = (px) => { document.getElementById("spacer").style.height = px + "px"; };
       window.__resetLog = () => { document.getElementById("log").textContent = "leak log"; };
 
-      // Counts real animation frames so we can prove the bar's loop parks when
-      // it has nothing to draw, instead of running a forced layout forever.
+      // Counts animation frames requested by the bundle. Only meaningful when
+      // the bundle runs in THIS world (the localhost harness) — as a real
+      // extension it has its own isolated `window` and this patch cannot see it.
       window.__rafCount = 0;
       const nativeRaf = window.requestAnimationFrame.bind(window);
       window.requestAnimationFrame = (cb) => { window.__rafCount++; return nativeRaf(cb); };
-      // Uncounted, so the driver can tick real frames without polluting the
-      // number it is measuring — and can tell "loop parked" from "tab hidden".
       window.__nativeRaf = nativeRaf;
       // Always settles: in a hidden tab rAF never fires, and an unguarded await
       // here hangs the driver for 45s looking exactly like a renderer freeze.
@@ -221,29 +170,43 @@
         });
       };
 
+      const snap = (el) => ({
+        t: Number(el.currentTime.toFixed(2)),
+        paused: el.paused,
+        muted: el.muted,
+        volume: Number(el.volume.toFixed(2)),
+        duration: Number.isFinite(el.duration) ? Number(el.duration.toFixed(2)) : null,
+      });
+      const box = (el) => { const r = el.getBoundingClientRect();
+        return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; };
+
       window.__probe = () => ({
-        feed: { t: Number(document.getElementById("v").currentTime.toFixed(2)), paused: document.getElementById("v").paused, muted: document.getElementById("v").muted, volume: Number(document.getElementById("v").volume.toFixed(2)) },
-        modalVid: { t: Number(document.getElementById("v2").currentTime.toFixed(2)), paused: document.getElementById("v2").paused, muted: document.getElementById("v2").muted },
+        feed: snap(v),
+        modalVid: snap(v2),
         leaks: document.getElementById("log").textContent.split("\n").filter((l) => l.startsWith("LEAK")),
         overlay: (() => {
           const host = document.querySelector("igvc-overlay");
           if (!host) return null;
-          const r = host.getBoundingClientRect();
           const sr = host.shadowRoot;
           return {
-            rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)],
+            rect: box(host),
             visible: sr.querySelector(".wrap").classList.contains("on"),
             parent: host.parentElement.tagName + (host.parentElement.id ? "#" + host.parentElement.id : ""),
             time: sr.querySelector(".cur").textContent + " / " + sr.querySelector(".dur").textContent,
             seekDisabled: sr.querySelector(".seek").classList.contains("disabled"),
           };
         })(),
-        rects: {
-          feed: (() => { const r = document.getElementById("v").getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; })(),
-          modal: (() => { const r = document.getElementById("v2").getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; })(),
-        },
+        rects: { feed: box(v), modal: box(v2) },
       });
+
+      // Served as localhost we are the only thing loading the bundle. Served as
+      // instagram.com (scripts/e2e.mjs maps the host to this server) the real
+      // unpacked extension injects it, and loading it twice would build two bars.
+      if (!/(^|\.)instagram\.com$/.test(location.hostname)) {
+        const s = document.createElement("script");
+        s.src = "/content.js";
+        document.body.appendChild(s);
+      }
     </script>
-    <script src="/content.js"></script>
   </body>
 </html>
