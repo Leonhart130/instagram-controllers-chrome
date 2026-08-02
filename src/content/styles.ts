@@ -107,6 +107,48 @@ export const BAR_CSS = `
 .btn:focus-visible { outline: 2px solid #fff; outline-offset: -2px; }
 .btn svg { display: block; }
 
+/* ---- playback speed ---- */
+.speed { position: relative; display: flex; align-items: center; }
+.btn.rate {
+  width: auto;
+  min-width: 34px;
+  padding: 0 7px;
+  font: 600 12px/1 inherit;
+  font-variant-numeric: tabular-nums;
+}
+.ratemenu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 74px;
+  padding: 4px;
+  border-radius: 10px;
+  background: rgba(20, 20, 20, .96);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .5);
+  /* The bar clips to the video box, so a menu growing upwards would be cut off
+     without room made for it. */
+  max-height: 240px;
+  overflow-y: auto;
+}
+.ratemenu[hidden] { display: none; }
+.rateitem {
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font: 500 12px/1 inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+  padding: 7px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.rateitem:hover { background: rgba(255, 255, 255, .16); }
+.rateitem.on { background: rgba(255, 255, 255, .1); font-weight: 700; }
+.rateitem.on::after { content: " ✓"; }
+
 .time {
   font-variant-numeric: tabular-nums;
   font-size: 11.5px;

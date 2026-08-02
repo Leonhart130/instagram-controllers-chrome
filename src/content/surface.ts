@@ -5,6 +5,10 @@
  * so they are never a safe anchor. Add a surface to ENABLED to turn the bar on
  * there; each new surface has its own overlay stack and is worth testing before
  * being switched on.
+ *
+ * Stories stay off deliberately rather than by omission: they draw their own
+ * segment progress bar and pause-on-hold, which a second scrubber sitting on top
+ * of would fight with. Direct and explore are simply untested.
  */
 
 export type Surface =
@@ -18,7 +22,7 @@ export type Surface =
   | "profile"
   | "other";
 
-const ENABLED = new Set<Surface>(["feed", "post"]);
+const ENABLED = new Set<Surface>(["feed", "post", "reels", "reel"]);
 
 export function surfaceOf(path: string = location.pathname): Surface {
   if (path === "/" || path === "") return "feed";

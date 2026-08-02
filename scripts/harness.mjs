@@ -256,6 +256,85 @@ async function main() {
     check("bar still finds a video that is not hit-testable",
       foundAnyway.visible === true && JSON.stringify(foundAnyway.rect) === JSON.stringify(foundAnyway.video),
       `bar ${JSON.stringify(foundAnyway.rect)} vs video ${JSON.stringify(foundAnyway.video)}`);
+    // --- 5. playback speed ------------------------------------------------
+    await cdp.mouseMove(rect.x, rect.y);
+    await cdp.mouseMove(rect.x + 1, rect.y + 1);
+    await sleep(400);
+    const rateBtn = await cdp.eval(`
+      const sr = document.querySelector('igvc-overlay').shadowRoot;
+      const r = sr.querySelector('.rate').getBoundingClientRect();
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2),
+               label: sr.querySelector('.rate').textContent,
+               rate: document.getElementById('v').playbackRate };
+    `);
+    check("speed starts at 1x", rateBtn.label === "1x" && rateBtn.rate === 1,
+      `label ${rateBtn.label}, playbackRate ${rateBtn.rate}`);
+
+    await cdp.mouseMove(rateBtn.x, rateBtn.y);
+    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: rateBtn.x, y: rateBtn.y, button: "left", buttons: 1, clickCount: 1 });
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: rateBtn.x, y: rateBtn.y, button: "left", buttons: 0, clickCount: 1 });
+    await sleep(300);
+    const item = await cdp.eval(`
+      const sr = document.querySelector('igvc-overlay').shadowRoot;
+      const menu = sr.querySelector('.ratemenu');
+      if (menu.hidden) return { open: false };
+      const el = [...menu.children].find((c) => c.dataset.rate === '1.5');
+      const r = el.getBoundingClientRect();
+      return { open: true, x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2),
+               onScreen: r.top >= 0 && r.bottom <= innerHeight && r.width > 0 };
+    `);
+    check("the speed menu opens and is on screen", item.open === true && item.onScreen === true, JSON.stringify(item));
+
+    if (item.open) {
+      await cdp.mouseMove(item.x, item.y);
+      await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x: item.x, y: item.y, button: "left", buttons: 1, clickCount: 1 });
+      await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: item.x, y: item.y, button: "left", buttons: 0, clickCount: 1 });
+      await sleep(400);
+      const picked = await cdp.eval(`
+        const sr = document.querySelector('igvc-overlay').shadowRoot;
+        return { rate: document.getElementById('v').playbackRate,
+                 label: sr.querySelector('.rate').textContent,
+                 menuClosed: sr.querySelector('.ratemenu').hidden };
+      `);
+      check("picking 1.5x sets playbackRate and closes the menu",
+        Math.abs(picked.rate - 1.5) < 0.001 && picked.label === "1.5x" && picked.menuClosed === true,
+        JSON.stringify(picked));
+
+      // The reason the feature exists: Instagram resets playbackRate on its own.
+      const reasserted = await cdp.eval(`
+        const v = document.getElementById('v');
+        v.playbackRate = 1;                       // stand in for Instagram
+        await new Promise((r) => setTimeout(r, 400));
+        return v.playbackRate;
+      `);
+      check("speed is put back when the page resets it",
+        Math.abs(reasserted - 1.5) < 0.001, `playbackRate ${reasserted}`);
+    } else {
+      check("picking 1.5x sets playbackRate and closes the menu", null, "menu never opened");
+      check("speed is put back when the page resets it", null, "menu never opened");
+    }
+
+    // --- 6. the surface gate -----------------------------------------------
+    // Both directions, or "it works on reels" is indistinguishable from
+    // "it works everywhere and the gate does nothing".
+    for (const [path, expected] of [["/reels/", true], ["/stories/someone/1/", false]]) {
+      await cdp.send("Page.navigate", { url: `http://localhost:${PORT}${path}` });
+      await sleep(1500);
+      await cdp.eval("return await window.__ready;");
+      const box = await cdp.eval(`
+        const r = document.getElementById('v').getBoundingClientRect();
+        return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+      `);
+      await cdp.mouseMove(box.x, box.y);
+      await cdp.mouseMove(box.x + 1, box.y + 1);
+      await sleep(500);
+      const shown = await cdp.eval("const p = window.__probe(); return !!(p.overlay && p.overlay.visible);");
+      check(
+        expected ? `bar appears on ${path}` : `bar stays off on ${path}`,
+        shown === expected,
+        `visible=${shown}`,
+      );
+    }
   } finally {
     cdp?.close();
     proc.kill("SIGKILL");

@@ -1,7 +1,7 @@
 # Instagram Video Controls
 
 A Chrome/Brave extension that puts a real player bar on Instagram videos: play/pause, a seek bar
-you can scrub, volume with a remembered mute state, and fullscreen.
+you can scrub, volume with a remembered mute state, playback speed, and fullscreen.
 
 > Unofficial, and not affiliated with, endorsed by, or connected to Instagram or Meta. It reads
 > nothing and sends nothing anywhere — the only data it stores is your volume and mute preference,
@@ -10,9 +10,14 @@ you can scrub, volume with a remembered mute state, and fullscreen.
 Instagram ships videos with no controls and covers each one with click-catcher layers that own
 play/pause and mute. This replaces that with an actual player.
 
-**Scope today:** the feed (`/`) and the post modal (`/p/<code>/`). Reels, stories, DMs and explore
-are deliberately off — each has its own overlay stack and deserves to be tested before being
-switched on. See "Enabling more surfaces" below.
+**Scope today:** the feed (`/`), the post modal (`/p/<code>/`), and reels (`/reels/`,
+`/reel/<code>/`). Stories are deliberately off — they draw their own segment progress bar and
+pause-on-hold, which a second scrubber on top of would fight with. DMs and explore are simply
+untested. See "Enabling more surfaces" below.
+
+Your volume, mute and speed are remembered and re-applied every time Instagram resets them, which
+it does constantly. Only the video you are pointing at is allowed to make sound, so a feed
+autoplaying four posts does not play four soundtracks.
 
 ## Install
 
@@ -40,7 +45,7 @@ npm run typecheck  # tsc --noEmit
 npm run serve      # dev server for the harness (http :8731, https :8732)
 npm run fixture    # one-off: put a real .webm at .fixtures/clip.webm
                    #   npm run fixture -- /path/to/any-short-clip.webm
-npm run check      # build, then both suites below (35 checks)
+npm run check      # build, then both suites below (44 checks)
 npm run harness    # main-world checks against the harness
 npm run e2e        # drive the built extension in a throwaway browser
 npm run icons      # regenerate public/icons/*.png
@@ -136,17 +141,18 @@ The bar is driven by `requestAnimationFrame`, so it does no work at all while th
 `src/content/surface.ts`:
 
 ```ts
-const ENABLED = new Set<Surface>(["feed", "post"]);
+const ENABLED = new Set<Surface>(["feed", "post", "reels", "reel"]);
 ```
 
-Add `"reels"`, `"reel"`, `"stories"`, `"direct"` or `"explore"` and rebuild. Expect each to need
-work: reels autoplay on scroll and have a different overlay stack, and stories draw their own
-segment progress bar and pause-on-hold that the bar can fight with.
+Add `"stories"`, `"direct"` or `"explore"` and rebuild. Expect each to need work — stories in
+particular draw their own segment progress bar and pause-on-hold. The suite checks the gate in
+both directions (a bar on `/reels/`, no bar on `/stories/`), so a surface you switch on is at
+least exercised.
 
 ## Not built yet
 
-Playback speed, keyboard shortcuts, picture-in-picture, and an options page. The bar is laid out
-so speed and PiP drop into the control row without restructuring anything.
+Global keyboard shortcuts, picture-in-picture, and an options page. The sliders and the speed menu
+are keyboard-operable where they sit, but there are no page-wide hotkeys.
 
 ## Licence
 

@@ -229,3 +229,32 @@ extension at all — it was in the check that certified the previous fix.
 
 - **8.7 A test command that does not build tests the previous build.** `npm run e2e` loaded `dist/`
   as-is, so editing `src/` and running it reported passes for the old bundle.
+
+## §9 — Attributing a change to the user
+
+Three attempts, each defeated by the same shape of problem, and worth writing down because the
+first two both looked obviously correct when written.
+
+- **9.1 `navigator.userActivation.isActive`** — true for ~5 seconds after *any* gesture anywhere on
+  the page. An automatic Instagram re-mute in that window was persisted as the user's preference
+  (§5.3).
+
+- **9.2 A 500ms per-video window** — narrower, same defect. Round 2 found it persisting a *different*
+  video's mute (§8.2); scoping it to one video did not save it either, because a page reset of the
+  *same* video inside the window still counted. That is what the playback-speed check caught: the
+  page setting `playbackRate` back to 1 landed 400ms after the user chose 1.5x, and was recorded as
+  the user choosing 1x.
+
+- **9.3 The call site.** ⭐ **A time window cannot tell "the user did this" from "something else did
+  this very soon after" — nothing observable at the event can.** Only the code that made the change
+  knows. Preferences are now written by `setVolume()` / `setSpeed()` and nowhere else; every other
+  `volumechange` / `ratechange` is the page interfering and gets put back.
+
+  A short window survives, but doing a job it can actually do: while our own controls are driving a
+  video, unaccounted-for changes are *ignored* rather than fought, so a burst of writes from
+  dragging the volume slider does not read as interference. It can delay a correction; it can never
+  record a preference.
+
+  The cost, stated plainly: Instagram's own mute button no longer updates the preference — it is
+  treated as the page interfering and put back. For a tool whose whole purpose is that your setting
+  survives Instagram resetting it, that is the right way round.

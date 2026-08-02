@@ -438,6 +438,32 @@ async function main() {
         JSON.stringify(afterExit));
     }
 
+    // --- playback speed, through real storage -----------------------------
+    await cdp.mouseMove(rect.x, rect.y);
+    await cdp.mouseMove(rect.x + 1, rect.y + 1);
+    await sleep(300);
+    const rateHit = await cdp.eval(`
+      const sr = document.querySelector('igvc-overlay').shadowRoot;
+      const r = sr.querySelector('.rate').getBoundingClientRect();
+      return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)];
+    `);
+    await cdp.click(...rateHit);
+    await sleep(300);
+    const rateItem = await cdp.eval(`
+      const menu = document.querySelector('igvc-overlay').shadowRoot.querySelector('.ratemenu');
+      if (menu.hidden) return null;
+      const el = [...menu.children].find((c) => c.dataset.rate === '1.5');
+      const r = el.getBoundingClientRect();
+      return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)];
+    `);
+    check("speed menu opens in the isolated world", rateItem !== null);
+    if (rateItem) {
+      await cdp.click(...rateItem);
+      await sleep(500);
+      const set = await cdp.eval("return document.getElementById('v').playbackRate;");
+      check("speed menu sets playbackRate", Math.abs(set - 1.5) < 0.001, `playbackRate ${set}`);
+    }
+
     // --- preferences survive a reload (chrome.storage.sync round trip) ----
     await cdp.mouseMove(rect.x, rect.y);
     await cdp.mouseMove(rect.x + 1, rect.y + 1);
@@ -476,6 +502,12 @@ async function main() {
     check("unmute preference survives a reload (chrome.storage.sync)",
       afterHover.muted === false,
       `after reload + gesture + hover muted=${afterHover.muted} (hasBeenActive=${afterHover.hasBeenActive})`);
+
+    // Speed needs no user gesture — nothing in the autoplay policy cares about
+    // playbackRate — so it must be back before anything is hovered at all.
+    const speedAfter = await cdp.eval("return document.getElementById('v').playbackRate;");
+    check("speed preference survives a reload", Math.abs(speedAfter - 1.5) < 0.001,
+      `playbackRate ${speedAfter}`);
   } finally {
     cdp?.close();
     proc.kill("SIGKILL");

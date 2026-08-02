@@ -26,9 +26,15 @@ const ROOT = new URL("..", import.meta.url).pathname;
 const HTTP_PORT = 8731;
 const HTTPS_PORT = 8732;
 
+// The same harness page on several paths, because the extension resolves which
+// surface it is on from location.pathname alone. That makes the surface gate
+// testable: /reels/ must get a bar, /stories/ must not.
 const ROUTES = {
   "/": ["dev/index.html", "text/html; charset=utf-8"],
   "/index.html": ["dev/index.html", "text/html; charset=utf-8"],
+  "/reels/": ["dev/index.html", "text/html; charset=utf-8"],
+  "/reel/FAKE/": ["dev/index.html", "text/html; charset=utf-8"],
+  "/stories/someone/1/": ["dev/index.html", "text/html; charset=utf-8"],
   "/content.js": ["dist/content.js", "text/javascript; charset=utf-8"],
   "/content.css": ["dist/content.css", "text/css; charset=utf-8"],
   // A real, decodable clip. It matters that this is genuine media: duration,

@@ -3,10 +3,14 @@
 export interface Prefs {
   volume: number;
   muted: boolean;
+  speed: number;
 }
 
+/** Offered in the menu, and the range a stored value is allowed to take. */
+export const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as const;
+
 const KEY = "igvc:prefs";
-const DEFAULTS: Prefs = { volume: 1, muted: true };
+const DEFAULTS: Prefs = { volume: 1, muted: true, speed: 1 };
 
 let cache: Prefs = { ...DEFAULTS };
 let saveTimer: number | undefined;
@@ -20,7 +24,11 @@ function storageAvailable(): boolean {
 function sanitize(raw: unknown): Prefs {
   const p = (raw ?? {}) as Partial<Prefs>;
   const volume = typeof p.volume === "number" && p.volume >= 0 && p.volume <= 1 ? p.volume : DEFAULTS.volume;
-  return { volume, muted: typeof p.muted === "boolean" ? p.muted : DEFAULTS.muted };
+  // Clamped rather than snapped to the menu: a value typed into storage by hand
+  // should still work, but a nonsense one must not make every video unplayable.
+  const speed =
+    typeof p.speed === "number" && p.speed >= 0.0625 && p.speed <= 16 ? p.speed : DEFAULTS.speed;
+  return { volume, speed, muted: typeof p.muted === "boolean" ? p.muted : DEFAULTS.muted };
 }
 
 export const prefs = {
@@ -49,7 +57,7 @@ export const prefs = {
 
   update(patch: Partial<Prefs>): void {
     const next = sanitize({ ...cache, ...patch });
-    if (next.volume === cache.volume && next.muted === cache.muted) return;
+    if (next.volume === cache.volume && next.muted === cache.muted && next.speed === cache.speed) return;
     cache = next;
     if (!storageAvailable()) return;
     clearTimeout(saveTimer);

@@ -17,7 +17,8 @@
 import { ICONS } from "./icons";
 import { BAR_CSS } from "./styles";
 import { fullscreenVideo, releaseIfInactive, toggleFullscreen } from "./fullscreen";
-import { markUserIntent } from "./registry";
+import { setSpeed, setVolume } from "./registry";
+import { SPEEDS } from "./prefs";
 
 const HOST_TAG = "igvc-overlay";
 const Z_INDEX = 2147483000;
@@ -63,6 +64,11 @@ function usableDuration(video: HTMLVideoElement): number {
   return 0;
 }
 
+/** 1 -> "1x", 1.5 -> "1.5x", 0.25 -> "0.25x". */
+function formatRate(rate: number): string {
+  return `${Number(rate.toFixed(2))}x`;
+}
+
 function ratioFrom(event: PointerEvent, track: HTMLElement): number {
   const rect = track.getBoundingClientRect();
   if (rect.width <= 0) return 0;
@@ -93,6 +99,10 @@ const TEMPLATE = `
     </div>
     <span class="time"><span class="cur">0:00</span> / <span class="dur">0:00</span></span>
       <span class="spacer"></span>
+      <div class="speed">
+        <div class="ratemenu" role="menu" hidden></div>
+        <button class="btn rate" type="button" aria-label="Playback speed" aria-haspopup="true" aria-expanded="false">1x</button>
+      </div>
       <button class="btn fs" type="button" aria-label="Fullscreen"></button>
     </div>
   </div>
@@ -108,6 +118,7 @@ interface Painted {
   muted: boolean | null;
   fullscreen: boolean | null;
   seekable: boolean | null;
+  rate: number;
 }
 
 const BLANK: Painted = {
@@ -120,6 +131,7 @@ const BLANK: Painted = {
   muted: null,
   fullscreen: null,
   seekable: null,
+  rate: -1,
 };
 
 class ControlBar {
@@ -136,6 +148,8 @@ class ControlBar {
   private readonly playBtn: HTMLButtonElement;
   private readonly muteBtn: HTMLButtonElement;
   private readonly fsBtn: HTMLButtonElement;
+  private readonly rateBtn: HTMLButtonElement;
+  private readonly rateMenu: HTMLElement;
   private readonly volSlider: HTMLElement;
   private readonly volTrack: HTMLElement;
   private readonly volFill: HTMLElement;
@@ -179,6 +193,8 @@ class ControlBar {
     this.playBtn = q<HTMLButtonElement>(".play");
     this.muteBtn = q<HTMLButtonElement>(".mute");
     this.fsBtn = q<HTMLButtonElement>(".fs");
+    this.rateBtn = q<HTMLButtonElement>(".rate");
+    this.rateMenu = q(".ratemenu");
     this.volSlider = q(".volslider");
     this.volTrack = q(".vtrack");
     this.volFill = q(".vfill");
@@ -225,6 +241,7 @@ class ControlBar {
     if (this.dragging) return;
     if (!this.visible) return;
     this.visible = false;
+    this.closeRateMenu();
     this.wrap.classList.remove("on");
     this.host.style.setProperty("visibility", "hidden", "important");
   }
@@ -373,6 +390,17 @@ class ControlBar {
       this.volSlider.setAttribute("aria-valuetext", video.muted ? "muted" : `${Math.round(effectiveVolume * 100)}%`);
     }
 
+    if (Math.abs(video.playbackRate - p.rate) > 0.001) {
+      p.rate = video.playbackRate;
+      this.rateBtn.textContent = formatRate(video.playbackRate);
+      this.rateBtn.setAttribute("aria-label", `Playback speed, ${formatRate(video.playbackRate)}`);
+      for (const item of this.rateMenu.children) {
+        const on = Math.abs(Number((item as HTMLElement).dataset.rate) - video.playbackRate) < 0.001;
+        item.classList.toggle("on", on);
+        item.setAttribute("aria-checked", String(on));
+      }
+    }
+
     if (p.fullscreen !== this.inFullscreen) {
       p.fullscreen = this.inFullscreen;
       this.fsBtn.innerHTML = this.inFullscreen ? ICONS.exitFullscreen : ICONS.enterFullscreen;
@@ -397,6 +425,44 @@ class ControlBar {
       e.preventDefault();
       apply(video, direction, toEnd);
     });
+  }
+
+  private speedWrap(): HTMLElement {
+    return this.rateBtn.parentElement as HTMLElement;
+  }
+
+  private buildRateMenu(): void {
+    for (const rate of SPEEDS) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "rateitem";
+      item.dataset.rate = String(rate);
+      item.setAttribute("role", "menuitemradio");
+      item.setAttribute("aria-checked", "false");
+      item.textContent = formatRate(rate);
+      item.addEventListener("click", () => {
+        const video = this.video;
+        this.closeRateMenu();
+        if (!video) return;
+        setSpeed(video, rate);
+      });
+      this.rateMenu.appendChild(item);
+    }
+  }
+
+  private toggleRateMenu(): void {
+    this.rateMenu.hidden ? this.openRateMenu() : this.closeRateMenu();
+  }
+
+  private openRateMenu(): void {
+    this.rateMenu.hidden = false;
+    this.rateBtn.setAttribute("aria-expanded", "true");
+  }
+
+  private closeRateMenu(): void {
+    if (this.rateMenu.hidden) return;
+    this.rateMenu.hidden = true;
+    this.rateBtn.setAttribute("aria-expanded", "false");
   }
 
   private togglePlayback(): void {
@@ -449,9 +515,8 @@ class ControlBar {
     this.muteBtn.addEventListener("click", () => {
       const video = this.video;
       if (!video) return;
-      markUserIntent(video);
-      if (video.muted && video.volume === 0) video.volume = 0.5;
-      video.muted = !video.muted;
+      const volume = video.muted && video.volume === 0 ? 0.5 : video.volume;
+      setVolume(video, volume, !video.muted);
     });
 
     this.fsBtn.addEventListener("click", () => {
@@ -470,9 +535,7 @@ class ControlBar {
     this.bindSlider(this.volSlider, this.volTrack, "volume", (ratio) => {
       const video = this.video;
       if (!video) return;
-      markUserIntent(video);
-      video.volume = ratio;
-      video.muted = ratio === 0;
+      setVolume(video, ratio, ratio === 0);
     });
 
     this.bindSliderKeys(this.seek, (video, dir, toEnd) => {
@@ -483,10 +546,22 @@ class ControlBar {
         : Math.min(duration, Math.max(0, video.currentTime + dir * 5));
     });
     this.bindSliderKeys(this.volSlider, (video, dir, toEnd) => {
-      markUserIntent(video);
       const next = toEnd ? (dir > 0 ? 1 : 0) : Math.min(1, Math.max(0, video.volume + dir * 0.05));
-      video.volume = next;
-      video.muted = next === 0;
+      setVolume(video, next, next === 0);
+    });
+
+    this.buildRateMenu();
+    this.rateBtn.addEventListener("click", () => this.toggleRateMenu());
+    // Any other interaction with the bar dismisses it, which is what a menu that
+    // overlaps the controls has to do to stay out of the way.
+    this.wrap.addEventListener("pointerdown", (e) => {
+      if (!e.composedPath().includes(this.speedWrap())) this.closeRateMenu();
+    });
+    this.root.addEventListener("keydown", (e) => {
+      if ((e as KeyboardEvent).key === "Escape" && !this.rateMenu.hidden) {
+        this.closeRateMenu();
+        this.rateBtn.focus();
+      }
     });
 
     document.addEventListener("fullscreenchange", this.onFullscreenChange);

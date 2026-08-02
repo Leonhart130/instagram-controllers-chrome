@@ -22,37 +22,68 @@ const written = new WeakMap<HTMLVideoElement, { volume: number; muted: boolean; 
 /** Guards against a ping-pong war if Instagram insists on re-muting. */
 const reasserts = new WeakMap<HTMLVideoElement, number>();
 const replayTimers = new WeakMap<HTMLVideoElement, number>();
+/** Same scheme as `written`, for playbackRate. */
+const wroteRate = new WeakMap<HTMLVideoElement, number>();
+const rateReasserts = new WeakMap<HTMLVideoElement, number>();
 const MAX_REASSERTS = 3;
 
 /** The video the control bar is pointing at — the only one allowed to make sound. */
 let active: HTMLVideoElement | null = null;
-/** Which video the user just acted on, and until when. */
-let intent: { video: HTMLVideoElement; until: number } | null = null;
+/**
+ * While our own controls are driving a video, ignore changes we cannot account
+ * for instead of fighting them. Dragging the volume slider queues a burst of
+ * writes, and an event from an earlier write arriving after a later one has
+ * been recorded would otherwise read as the page interfering.
+ *
+ * This can only ever delay a correction — never record a preference — which is
+ * the difference between it and the intent window it replaced.
+ */
+const driving = new WeakMap<HTMLVideoElement, number>();
+const DRIVING_MS = 400;
+
+function isDriving(video: HTMLVideoElement): boolean {
+  return performance.now() < (driving.get(video) ?? 0);
+}
 
 export function getVideos(): ReadonlySet<HTMLVideoElement> {
   return videos;
 }
 
 /**
- * Called by our own controls before they change volume or mute.
+ * Change volume/mute on behalf of the user. The ONLY way a preference is written.
  *
- * navigator.userActivation.isActive cannot do this job: it stays true for ~5s
- * after *any* gesture anywhere on the page, so an automatic Instagram re-mute
- * that lands in that window would be recorded as the user's preference and
- * persisted.
+ * Two time-windowed schemes were tried before this and both persisted the
+ * page's changes as the user's: `userActivation.isActive` (true for ~5s after
+ * any gesture anywhere) and a 500ms per-video window (a reset landing inside it
+ * still counted). A window cannot distinguish "the user did this" from
+ * "something else did this very soon after" — only knowing which call site made
+ * the change can, so preferences are written here and nowhere else.
  *
- * Scoped to the video the control acted on, for the same reason. A window that
- * is merely time-bounded is still global: click unmute on one post, and any
- * other video muted within the window — including by our own applyPrefs, which
- * mutes every non-active video — lands here and persists muted:true, undoing
- * the click a second later and surviving the reload.
+ * The cost is that Instagram's own mute button no longer updates the
+ * preference; it is treated as the page interfering and put back. For a tool
+ * whose entire purpose is that your setting survives Instagram resetting it,
+ * that is the right way round.
  */
-export function markUserIntent(video: HTMLVideoElement): void {
-  intent = { video, until: performance.now() + 500 };
+export function setVolume(video: HTMLVideoElement, volume: number, muted: boolean): void {
+  driving.set(video, performance.now() + DRIVING_MS);
+  const volumeChanges = Math.abs(video.volume - volume) >= 0.001;
+  const muteChanges = video.muted !== muted;
+  if (volumeChanges || muteChanges) {
+    written.set(video, { volume, muted, pending: (volumeChanges ? 1 : 0) + (muteChanges ? 1 : 0) });
+    if (volumeChanges) video.volume = volume;
+    if (muteChanges) video.muted = muted;
+  }
+  prefs.update({ volume, muted });
 }
 
-function hasUserIntent(video: HTMLVideoElement): boolean {
-  return intent !== null && intent.video === video && performance.now() < intent.until;
+/** Change playback speed on behalf of the user. See setVolume. */
+export function setSpeed(video: HTMLVideoElement, rate: number): void {
+  driving.set(video, performance.now() + DRIVING_MS);
+  if (Math.abs(video.playbackRate - rate) >= 0.001) {
+    wroteRate.set(video, rate);
+    video.playbackRate = rate;
+  }
+  prefs.update({ speed: rate });
 }
 
 export function setActiveVideo(video: HTMLVideoElement | null): void {
@@ -80,20 +111,29 @@ function adopt(video: HTMLVideoElement): void {
   video.addEventListener("loadedmetadata", () => {
     // A fresh load is a new fight, not a continuation of the old one.
     reasserts.delete(video);
+    rateReasserts.delete(video);
     applyPrefs(video);
+    applyRate(video);
   }, opts);
 
   video.addEventListener("play", () => {
     reasserts.delete(video);
+    rateReasserts.delete(video);
     applyPrefs(video);
+    applyRate(video);
     // Instagram sometimes mutes a beat after playback starts.
     clearTimeout(replayTimers.get(video));
-    replayTimers.set(video, window.setTimeout(() => applyPrefs(video), 200));
+    replayTimers.set(video, window.setTimeout(() => {
+      applyPrefs(video);
+      applyRate(video);
+    }, 200));
   }, opts);
 
   video.addEventListener("volumechange", () => onVolumeChange(video), opts);
+  video.addEventListener("ratechange", () => onRateChange(video), opts);
 
   applyPrefs(video);
+  applyRate(video);
 }
 
 function forget(video: HTMLVideoElement): void {
@@ -103,7 +143,6 @@ function forget(video: HTMLVideoElement): void {
   replayTimers.delete(video);
   videos.delete(video);
   if (active === video) active = null;
-  if (intent?.video === video) intent = null;
 }
 
 function applyPrefs(video: HTMLVideoElement): void {
@@ -134,6 +173,34 @@ function applyPrefs(video: HTMLVideoElement): void {
   if (muteChanges) video.muted = targetMuted;
 }
 
+/**
+ * Playback speed applies to every video, not just the active one.
+ *
+ * Unlike volume there is nothing to collide with — two videos at 1.5x is
+ * exactly what "I set 1.5x" should mean — and no autoplay policy to satisfy,
+ * so no user-activation gate is needed.
+ */
+function applyRate(video: HTMLVideoElement): void {
+  if (!isEnabledHere()) return;
+  const { speed } = prefs.current;
+  if (Math.abs(video.playbackRate - speed) < 0.001) return;
+  wroteRate.set(video, speed);
+  video.playbackRate = speed;
+}
+
+function onRateChange(video: HTMLVideoElement): void {
+  const ours = wroteRate.get(video);
+  if (ours !== undefined && Math.abs(video.playbackRate - ours) < 0.001) {
+    wroteRate.delete(video);
+    return;
+  }
+  if (isDriving(video)) return;
+  const count = rateReasserts.get(video) ?? 0;
+  if (count >= MAX_REASSERTS) return;
+  rateReasserts.set(video, count + 1);
+  applyRate(video);
+}
+
 function onVolumeChange(video: HTMLVideoElement): void {
   // Our own write coming back to us. Matching on the exact values rather than a
   // flag released on a timer, because volumechange is a media-element task and
@@ -144,11 +211,7 @@ function onVolumeChange(video: HTMLVideoElement): void {
     return;
   }
 
-  if (hasUserIntent(video)) {
-    prefs.update({ volume: video.volume, muted: video.muted });
-    reasserts.delete(video);
-    return;
-  }
+  if (isDriving(video)) return;
 
   const count = reasserts.get(video) ?? 0;
   if (count >= MAX_REASSERTS) return;
