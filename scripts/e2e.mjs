@@ -266,6 +266,11 @@ async function main() {
     await sleep(150);
     const control = await cdp.eval("return window.__probe().leaks;");
     check("negative control: leak detector fires on a page click", control.length > 0, `${control.length} entries`);
+    // The other half of the fullscreen navigation fix: outside fullscreen,
+    // clicking a post must still open it. Blocking that everywhere would make
+    // the fullscreen checks pass for the wrong reason.
+    check("outside fullscreen the post link still works",
+      control.some((l) => l.includes("would navigate")), JSON.stringify(control));
 
     // A click that lands on nothing leaks nothing and does nothing, which is
     // indistinguishable from working isolation. Prove the target is really there.
@@ -371,6 +376,31 @@ async function main() {
         fs.igMuteSize[0] <= 40 && fs.igMuteSize[1] <= 40,
         `${fs.igMuteSize[0]}x${fs.igMuteSize[1]}`,
       );
+
+      // In fullscreen the bar sits inside Instagram's own post link, so a click
+      // that is merely stopped from propagating still follows the anchor.
+      await cdp.eval("window.__resetLog(); return true;");
+      const beforeBody = await cdp.eval("return document.getElementById('v').paused;");
+      await cdp.click(640, 300); // middle of the picture, well clear of the bar
+      await sleep(300);
+      const bodyClick = await cdp.eval(`
+        return { leaks: window.__probe().leaks, paused: document.getElementById('v').paused };
+      `);
+      check("fullscreen: clicking the picture does not navigate",
+        bodyClick.leaks.length === 0, JSON.stringify(bodyClick.leaks));
+      check("fullscreen: clicking the picture toggles playback",
+        bodyClick.paused !== beforeBody, `${beforeBody} -> ${bodyClick.paused}`);
+
+      const seekFs = await cdp.eval(`
+        const sr = document.querySelector('igvc-overlay').shadowRoot;
+        const r = sr.querySelector('.seek .track').getBoundingClientRect();
+        return [Math.round(r.left + r.width * 0.3), Math.round(r.top + r.height / 2)];
+      `);
+      await cdp.eval("window.__resetLog(); return true;");
+      await cdp.click(...seekFs);
+      await sleep(300);
+      const seekLeaks = await cdp.eval("return window.__probe().leaks;");
+      check("fullscreen: scrubbing does not navigate", seekLeaks.length === 0, JSON.stringify(seekLeaks));
 
       // Exit through our own button rather than Escape: it is the path the user
       // takes, and it exercises the exit branch of onFullscreenChange.

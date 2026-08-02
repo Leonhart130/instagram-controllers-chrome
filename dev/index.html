@@ -21,6 +21,7 @@
       /* Mimics Instagram's structure: a wrapper holding the video plus
          click-catcher and control siblings stacked on top of it. */
       .post {
+        display: block;
         width: 480px;
         background: #fff;
         border: 1px solid #dbdbdb;
@@ -85,13 +86,17 @@
     <div id="status">loading clip…</div>
     <div id="spacer"></div>
 
-    <div class="post">
+    <!-- Instagram wraps posts in a link to the reel. It is the reason a click
+         anywhere in fullscreen navigated: our bar is moved inside the
+         fullscreen element, i.e. inside this anchor, and stopPropagation()
+         does not stop an ancestor anchor's default action. -->
+    <a class="post" id="postlink" href="/reel/FAKE/">
       <div class="media" id="media">
         <video id="v" src="/clip.webm" preload="auto" playsinline></video>
         <div class="catcher" id="catcher"></div>
         <button class="ig-mute" id="igmute">M</button>
       </div>
-    </div>
+    </a>
 
     <div id="log">leak log (must stay empty when clicking our bar)</div>
 
@@ -112,6 +117,15 @@
 
       // --- Instagram's own handlers. Any of these firing while we use the
       // --- control bar means our event isolation is broken.
+      // Models the anchor's default action without ever leaving the page. It
+      // only fires if the event reached the anchor AND nothing called
+      // preventDefault — which is exactly the condition for a real navigation.
+      const postlink = document.getElementById("postlink");
+      postlink.addEventListener("click", (e) => {
+        if (!e.defaultPrevented) log("LEAK: would navigate to " + postlink.getAttribute("href"));
+        e.preventDefault();
+      });
+
       document.getElementById("catcher").addEventListener("click", () => log("LEAK: catcher click"));
       document.getElementById("media").addEventListener("click", () => log("LEAK: media click"));
       document.addEventListener("keydown", () => log("LEAK: document keydown"));

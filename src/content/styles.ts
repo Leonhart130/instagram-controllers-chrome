@@ -9,6 +9,15 @@ export const BAR_CSS = `
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+.root { position: absolute; inset: 0; pointer-events: none; }
+
+/* Only interactive in fullscreen, where it covers the whole screen and takes
+   the clicks that would otherwise reach Instagram's post link underneath.
+   Outside fullscreen it must stay inert: clicking a feed post to open it is
+   behaviour we have no business breaking. */
+.surface { position: absolute; inset: 0; pointer-events: none; }
+:host(.fs) .surface { pointer-events: auto; cursor: pointer; }
+
 .wrap {
   position: absolute;
   left: 0; right: 0; bottom: 0;

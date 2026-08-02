@@ -148,3 +148,26 @@ breakages were in the extension.
 
 - **6.6 `--headless=new` reports `visibilityState: "visible"`.** Every rAF-dependent check that was
   unmeasurable through the automation extension (§3.1) simply works in a browser the test owns.
+
+## §7 — Reported from real Instagram
+
+- **7.1 `stopPropagation()` does not stop an ancestor anchor. Only `preventDefault()` does.**
+  In fullscreen, clicking anywhere — the picture, the scrubber — navigated to the reel page.
+  Instagram wraps posts in `<a href="/reel/...">`, and fullscreen is the one situation where our
+  host is *inside* Instagram's DOM rather than hanging off `document.body`, so it is inside that
+  anchor. Propagation was being stopped, but an anchor's default action is decided after
+  propagation and does not care. ⭐ The two calls solve different problems: `stopPropagation`
+  keeps *listeners* from seeing the event, `preventDefault` keeps the *browser* from acting on it.
+  Isolation needs both.
+
+  It presented as inconsistent — the play, mute and fullscreen buttons were fine because their
+  handlers happened to call `preventDefault()` for unrelated reasons, while the scrubber (which
+  only prevented on `pointerdown`, not `click`) and the bare picture were not. Per-handler
+  `preventDefault` is not isolation; the isolation layer has to own it.
+
+- **7.2 An overlay with `pointer-events: none` is a hole, not a shield.** Clicks in the middle of
+  the fullscreen picture passed straight through the host to Instagram's click-catcher. In
+  fullscreen the bar now carries a full-screen `.surface` that takes those clicks and turns them
+  into play/pause. It stays inert everywhere else, because clicking a feed post to open it is
+  behaviour we have no business breaking — asserted in both directions, since a fix that blocked
+  navigation everywhere would make the fullscreen checks pass for the wrong reason.

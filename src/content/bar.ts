@@ -70,7 +70,9 @@ function ratioFrom(event: PointerEvent, track: HTMLElement): number {
 }
 
 const TEMPLATE = `
-<div class="wrap" part="wrap">
+<div class="root">
+  <div class="surface"></div>
+  <div class="wrap" part="wrap">
   <div class="seek" role="slider" tabindex="-1" aria-label="Seek">
     <div class="track">
       <div class="buffered"></div>
@@ -90,8 +92,9 @@ const TEMPLATE = `
       </div>
     </div>
     <span class="time"><span class="cur">0:00</span> / <span class="dur">0:00</span></span>
-    <span class="spacer"></span>
-    <button class="btn fs" type="button" aria-label="Fullscreen"></button>
+      <span class="spacer"></span>
+      <button class="btn fs" type="button" aria-label="Fullscreen"></button>
+    </div>
   </div>
 </div>`;
 
@@ -122,6 +125,8 @@ const BLANK: Painted = {
 class ControlBar {
   readonly host: HTMLElement;
   private readonly shadow: ShadowRoot;
+  private readonly root: HTMLElement;
+  private readonly surface: HTMLElement;
   private readonly wrap: HTMLElement;
   private readonly seek: HTMLElement;
   private readonly seekTrack: HTMLElement;
@@ -163,6 +168,8 @@ class ControlBar {
       return el;
     };
 
+    this.root = q(".root");
+    this.surface = q(".surface");
     this.wrap = q(".wrap");
     this.seek = q(".seek");
     this.seekTrack = q(".seek .track");
@@ -359,6 +366,13 @@ class ControlBar {
     }
   }
 
+  private togglePlayback(): void {
+    const video = this.video;
+    if (!video) return;
+    if (video.paused) void video.play().catch(() => {});
+    else video.pause();
+  }
+
   private paintSeek(ratio: number): void {
     const pct = `${Math.min(100, Math.max(0, ratio * 100))}%`;
     this.seekFill.style.width = pct;
@@ -369,27 +383,37 @@ class ControlBar {
 
   private wireEvents(): void {
     // Instagram listens on document for its own play/pause and mute toggles.
-    // Our host sits outside React's root so nothing leaks, but stop it anyway.
     // Bubble phase, deliberately: a capture-phase stopPropagation() here would
     // fire before the event reached our own buttons and kill every control.
-    // keydown/keyup are in the list because clicking a control focuses it, and
-    // a subsequent Space would otherwise both activate the button and reach
-    // Instagram's own shortcut handler.
-    const isolated = ["pointerdown", "mousedown", "click", "dblclick", "wheel", "keydown", "keyup"] as const;
-    for (const type of isolated) {
-      this.wrap.addEventListener(type, (e) => e.stopPropagation());
+    //
+    // preventDefault as well as stopPropagation, because they solve different
+    // problems. Outside fullscreen the host hangs off document.body and stopping
+    // propagation is enough. In fullscreen the host is moved inside the
+    // fullscreen element — which on Instagram sits inside the post's
+    // <a href="/reel/...">. An ancestor anchor's default action does not care
+    // that propagation stopped, so every click still navigated away.
+    const stopAndPrevent = ["pointerdown", "mousedown", "pointerup", "mouseup", "click", "auxclick", "dblclick"] as const;
+    for (const type of stopAndPrevent) {
+      this.root.addEventListener(type, (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+      });
+    }
+    // Stopped but never prevented: preventing wheel would trap the feed's
+    // scroll whenever the pointer happened to be over the bar, and preventing
+    // keys could swallow Escape on the way out of fullscreen.
+    for (const type of ["wheel", "keydown", "keyup"] as const) {
+      this.root.addEventListener(type, (e) => e.stopPropagation());
     }
 
-    this.playBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      const video = this.video;
-      if (!video) return;
-      if (video.paused) void video.play().catch(() => {});
-      else video.pause();
-    });
+    // In fullscreen the surface covers the screen, so this is "click the
+    // picture to pause" — what every other player does, and what Instagram's
+    // own click-catcher would otherwise turn into a navigation.
+    this.surface.addEventListener("click", () => this.togglePlayback());
 
-    this.muteBtn.addEventListener("click", (e) => {
-      e.preventDefault();
+    this.playBtn.addEventListener("click", () => this.togglePlayback());
+
+    this.muteBtn.addEventListener("click", () => {
       const video = this.video;
       if (!video) return;
       markUserIntent();
@@ -397,8 +421,7 @@ class ControlBar {
       video.muted = !video.muted;
     });
 
-    this.fsBtn.addEventListener("click", (e) => {
-      e.preventDefault();
+    this.fsBtn.addEventListener("click", () => {
       if (this.video) void toggleFullscreen(this.video);
     });
 
