@@ -254,6 +254,22 @@ async function main() {
     check("shadow styles applied (adoptedStyleSheets)", styled.sheets === 1 && styled.barHeight > 40, JSON.stringify(styled));
 
     // --- controls + isolation ------------------------------------------
+    await cdp.eval("window.__resetLog(); return true;");
+    await cdp.click(rect.x, rect.y - 150);
+    await sleep(250);
+    const control = await cdp.eval("return window.__probe().leaks;");
+    check("negative control: leak detector fires on a page click", control.length > 0, `${control.length} entries`);
+    // The other half of the fullscreen navigation fix: outside fullscreen,
+    // clicking a post must still open it. Blocking that everywhere would make
+    // the fullscreen checks pass for the wrong reason.
+    check("outside fullscreen the post link still works",
+      control.some((l) => l.includes("navigated to")), JSON.stringify(control));
+
+    // The negative control really navigates now, which detaches the bar, so
+    // re-hover and take the control positions afterwards.
+    await cdp.mouseMove(rect.x, rect.y);
+    await cdp.mouseMove(rect.x + 1, rect.y + 1);
+    await sleep(400);
     const coords = await cdp.eval(`
       const sr = document.querySelector('igvc-overlay').shadowRoot;
       const c = (sel, fx = 0.5) => { const r = sr.querySelector(sel).getBoundingClientRect();
@@ -261,16 +277,6 @@ async function main() {
       window.__resetLog();
       return { play: c('.play'), mute: c('.mute'), seek60: c('.seek .track', 0.6), fs: c('.fs') };
     `);
-
-    await cdp.click(rect.x, rect.y - 150);
-    await sleep(150);
-    const control = await cdp.eval("return window.__probe().leaks;");
-    check("negative control: leak detector fires on a page click", control.length > 0, `${control.length} entries`);
-    // The other half of the fullscreen navigation fix: outside fullscreen,
-    // clicking a post must still open it. Blocking that everywhere would make
-    // the fullscreen checks pass for the wrong reason.
-    check("outside fullscreen the post link still works",
-      control.some((l) => l.includes("would navigate")), JSON.stringify(control));
 
     // A click that lands on nothing leaks nothing and does nothing, which is
     // indistinguishable from working isolation. Prove the target is really there.
@@ -327,7 +333,9 @@ async function main() {
       Math.abs(afterControls.feed.t - seekTarget) < 1.5,
       `t=${afterControls.feed.t}`,
     );
-    check("bar clicks leak nothing", afterControls.leaks === control.length, `${afterControls.leaks} total, unchanged`);
+    // The log was reset after the negative control, so anything at all here is
+    // an event that escaped the bar.
+    check("bar clicks leak nothing", afterControls.leaks === 0, `${afterControls.leaks} entries since reset`);
 
     // The rAF-parking measurement lives in the localhost harness only: it works
     // by patching window.requestAnimationFrame, and a content script has its own

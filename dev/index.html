@@ -90,7 +90,7 @@
          anywhere in fullscreen navigated: our bar is moved inside the
          fullscreen element, i.e. inside this anchor, and stopPropagation()
          does not stop an ancestor anchor's default action. -->
-    <a class="post" id="postlink" href="/reel/FAKE/">
+    <a class="post" id="postlink" href="#reel-FAKE">
       <div class="media" id="media">
         <video id="v" src="/clip.webm" preload="auto" playsinline></video>
         <div class="catcher" id="catcher"></div>
@@ -117,13 +117,20 @@
 
       // --- Instagram's own handlers. Any of these firing while we use the
       // --- control bar means our event isolation is broken.
-      // Models the anchor's default action without ever leaving the page. It
-      // only fires if the event reached the anchor AND nothing called
-      // preventDefault — which is exactly the condition for a real navigation.
-      const postlink = document.getElementById("postlink");
-      postlink.addEventListener("click", (e) => {
-        if (!e.defaultPrevented) log("LEAK: would navigate to " + postlink.getAttribute("href"));
-        e.preventDefault();
+      // The anchor's REAL default action, observed by its real effect.
+      //
+      // The first version of this probe was a click listener on the anchor that
+      // logged when !defaultPrevented. That was worthless: an anchor's
+      // activation behaviour is not a listener, so stopPropagation() silenced
+      // the probe while the browser navigated anyway — the check passed on a
+      // build that still had the bug. A hash target has exactly the property we
+      // need to reproduce: only preventDefault() suppresses it, stopPropagation
+      // does not, and it does not tear the page down (LESSONS §8.1).
+      window.addEventListener("hashchange", () => {
+        log("LEAK: navigated to " + location.hash);
+        // Put it back so the next check starts from a clean slate; replaceState
+        // does not fire hashchange, so this cannot log itself.
+        history.replaceState(null, "", location.pathname + location.search);
       });
 
       document.getElementById("catcher").addEventListener("click", () => log("LEAK: catcher click"));
@@ -158,7 +165,10 @@
       window.__openModal = () => document.getElementById("modal").classList.add("open");
       window.__closeModal = () => document.getElementById("modal").classList.remove("open");
       window.__setSpacer = (px) => { document.getElementById("spacer").style.height = px + "px"; };
-      window.__resetLog = () => { document.getElementById("log").textContent = "leak log"; };
+      window.__resetLog = () => {
+        document.getElementById("log").textContent = "leak log";
+        if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+      };
 
       // Counts animation frames requested by the bundle. Only meaningful when
       // the bundle runs in THIS world (the localhost harness) — as a real
