@@ -1,10 +1,12 @@
 /**
- * Tracks every <video> currently in the document and keeps our volume/mute
- * preference applied to it.
+ * Tracks every <video> in the document and keeps our preferences — volume,
+ * mute and playback speed — applied to it.
  *
- * Instagram re-mutes and re-creates video elements constantly (virtualised feed,
- * React re-renders), so preferences have to be re-asserted on the media events
- * rather than set once at attach time.
+ * Instagram re-mutes, re-rates and re-creates video elements constantly
+ * (virtualised feed and reels, React re-renders), so preferences have to be
+ * re-asserted on the media events rather than set once at attach time. That is
+ * most of what this file is; the rest is telling our own writes apart from the
+ * page's, which took three attempts (LESSONS §9).
  */
 
 import { prefs } from "./prefs";

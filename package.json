@@ -1,7 +1,7 @@
 {
   "name": "ins-vcont",
-  "version": "0.1.0",
-  "description": "Chrome extension adding real video controls to Instagram",
+  "version": "0.2.0",
+  "description": "Chrome extension adding real video controls to Instagram: play/pause, scrubbing, volume, speed and fullscreen",
   "license": "MIT",
   "repository": {
     "type": "git",

@@ -7,10 +7,15 @@
  * importantly `requestAnimationFrame`, which a content script calls on its own
  * isolated `window` (LESSONS §6.2).
  *
- * It exists because these three claims were previously either unmeasured or
- * measured through an automation extension whose tab kept dropping to hidden,
- * which pauses rAF and makes every result meaningless. A browser this script
- * owns reports visibilityState "visible".
+ * It exists because several of these claims were previously either unmeasured
+ * or measured through an automation extension whose tab kept dropping to
+ * hidden, which pauses rAF and makes every result meaningless. A browser this
+ * script owns reports visibilityState "visible".
+ *
+ * Checks whose name ends "(so this test discriminates)" assert the FIXTURE is
+ * in the state that would break a wrong implementation. They are not padding:
+ * without them the check beside each one passes against a fixture that cannot
+ * tell right from wrong, which is the most common defect this repo has had.
  *
  * Usage:  npm run harness   (add --headful to watch)
  * Needs:  npm run serve, and npm run fixture once.

@@ -4,8 +4,8 @@ A Chrome/Brave extension that puts a real player bar on Instagram videos: play/p
 you can scrub, volume with a remembered mute state, playback speed, and fullscreen.
 
 > Unofficial, and not affiliated with, endorsed by, or connected to Instagram or Meta. It reads
-> nothing and sends nothing anywhere — the only data it stores is your volume and mute preference,
-> in `chrome.storage.sync`. It runs on `*.instagram.com` and nowhere else.
+> nothing and sends nothing anywhere — the only data it stores is your volume, mute and speed
+> preference, in `chrome.storage.sync`. It runs on `*.instagram.com` and nowhere else.
 
 Instagram ships videos with no controls and covers each one with click-catcher layers that own
 play/pause and mute. This replaces that with an actual player.
@@ -104,12 +104,17 @@ script owns. That last part is the point: through a browser automation extension
 dropping to `visibilityState: "hidden"`, which pauses `requestAnimationFrame` and makes every
 timing result meaningless. A browser this script launches reports `visible`.
 
-It covers the three claims the extension suite structurally cannot reach: that the render loop
-runs while the bar is shown and **parks** when it is hidden, that the bar binds to the topmost
-video rather than one behind a modal, and that a video running past the fold still gets a bar on
-screen. Two of its checks exist only to prove the other two can fail — that the modal video really
-is the larger one, and that the video really does overflow the fold. Without those, both tests
-would pass against a fixture that could not tell right from wrong.
+It covers what the extension suite structurally cannot reach: that the render loop runs while the
+bar is shown and **parks** when it is hidden, that the bar binds to the topmost video rather than
+one behind a modal, that a video running past the fold still gets a bar on screen, that a video
+taken out of hit testing is still found, that every speed option stays reachable on a short post,
+and the surface gate in both directions.
+
+Several of its checks exist only to prove the others can fail — that the modal video really is the
+larger one, that the video really does overflow the fold, that it really is `pointer-events: none`,
+that the post really is short. Without those, each of those tests would pass against a fixture that
+could not tell right from wrong. That has been the single most common defect in this repo: not
+broken code, but a check that could not go red.
 
 ### The reels checks
 
@@ -131,12 +136,13 @@ index.ts        MutationObserver keeps the registry fresh; a document-level poin
                 hit-tests against every registered video and points one shared bar at it
   bar.ts        <igvc-overlay> host at document.body level, Shadow DOM, repositioned
                 every frame from video.getBoundingClientRect()
-  registry.ts   tracks videos, re-applies the volume/mute preference when Instagram resets it
+  registry.ts   tracks videos, re-applies volume / mute / speed whenever Instagram resets them
+  prefs.ts      the three stored preferences, cached so reads are synchronous
   fullscreen.ts fullscreens the video's wrapper, not the video
-  surface.ts    resolves feed / post / reels / stories / … from the URL
+  surface.ts    resolves feed / post / reels / stories / … from the URL, and gates on it
 ```
 
-Three constraints shaped this:
+Four constraints shaped this:
 
 - **Nothing anchors on Instagram's class names.** They are obfuscated and rotate. The only anchors
   are `video` elements and their geometry.
@@ -148,7 +154,14 @@ Three constraints shaped this:
   video with `data-igvc-fs`; `public/content.css` keys off those to stretch the video back to
   fill, and both attributes are removed on exit.
 
-The bar is driven by `requestAnimationFrame`, so it does no work at all while the tab is hidden.
+- **Only our own controls may change a preference.** Every other `volumechange` / `ratechange` is
+  the page interfering and gets put back. Three attempts at inferring intent from timing all ended
+  up persisting Instagram's changes as yours — see `LESSONS.md` §9. The cost is that Instagram's
+  own mute button no longer updates the preference, which for a tool built to survive Instagram
+  resetting things is the right way round.
+
+The bar is driven by `requestAnimationFrame`, so it does no work at all while the tab is hidden,
+and parks itself entirely when the bar is not shown.
 
 ## Enabling more surfaces
 
@@ -162,6 +175,16 @@ Add `"stories"`, `"direct"` or `"explore"` and rebuild. Expect each to need work
 particular draw their own segment progress bar and pause-on-hold. The suite checks the gate in
 both directions (a bar on `/reels/`, no bar on `/stories/`), so a surface you switch on is at
 least exercised.
+
+## Known limitations
+
+- **Stories are off**, deliberately — see above.
+- **Instagram's own mute button** no longer updates the stored preference; the bar's does.
+- **Everything is verified against fixtures that model Instagram's structure**, not against
+  Instagram itself. The fixtures reproduce the click-catcher stack, the post modal over a
+  still-mounted feed, the post's `<a href>` wrapper and the snap-scrolling reels column — each
+  added because something broke there — but Instagram can always change in a way no fixture
+  anticipates.
 
 ## Not built yet
 
