@@ -3,6 +3,10 @@
 A Chrome/Brave extension that puts a real player bar on Instagram videos: play/pause, a seek bar
 you can scrub, volume with a remembered mute state, and fullscreen.
 
+> Unofficial, and not affiliated with, endorsed by, or connected to Instagram or Meta. It reads
+> nothing and sends nothing anywhere — the only data it stores is your volume and mute preference,
+> in `chrome.storage.sync`. It runs on `*.instagram.com` and nowhere else.
+
 Instagram ships videos with no controls and covers each one with click-catcher layers that own
 play/pause and mute. This replaces that with an actual player.
 
@@ -35,6 +39,7 @@ npm run build      # minified production build into dist/
 npm run typecheck  # tsc --noEmit
 npm run serve      # dev server for the harness (http :8731, https :8732)
 npm run fixture    # one-off: put a real .webm at .fixtures/clip.webm
+                   #   npm run fixture -- /path/to/any-short-clip.webm
 npm run check      # build, then both suites below (31 checks)
 npm run harness    # main-world checks against the harness
 npm run e2e        # drive the built extension in a throwaway browser

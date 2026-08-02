@@ -3,24 +3,49 @@
  *
  * It has to be genuine media rather than a scripted stand-in: duration,
  * currentTime and paused are DOM state, shared with the extension's isolated
- * world, while JavaScript properties defined on the element are not.
+ * world, while JavaScript properties defined on the element are not
+ * (LESSONS §6.1).
  *
- * The file is not committed (licensing, and it is 600 KB), so this copies one
- * from the system. Any short webm will do; swap in your own if you prefer.
+ * The file is not committed — it is a few hundred KB and not ours to
+ * redistribute — so point this at one you already have:
+ *
+ *     npm run fixture -- /path/to/any-short-clip.webm
+ *
+ * With no argument it looks in a couple of places a Linux desktop usually has
+ * one. Any short .webm works; nothing depends on its content or duration.
  */
 
 import { access, copyFile, mkdir, stat } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
 const DEST_DIR = new URL("../.fixtures", import.meta.url).pathname;
 const DEST = join(DEST_DIR, "clip.webm");
 
-const CANDIDATES = [
+/** Only used when no path is given on the command line. */
+const FALLBACKS = [
   "/usr/share/help/C/gnome-help/figures/display-dual-monitors.webm",
-  join(homedir(), ".local/share/Steam/steamui/movies/steam_os_startup.webm"),
-  join(homedir(), ".local/share/Steam/steamui/movies/deck_startup.webm"),
+  "/usr/share/doc/libwebp-dev/examples/test.webm",
 ];
+
+const explicit = process.argv[2];
+
+async function install(src, why) {
+  await mkdir(DEST_DIR, { recursive: true });
+  await copyFile(src, DEST);
+  const { size } = await stat(DEST);
+  console.log(`[igvc] fixture: ${why} ${src} -> .fixtures/clip.webm (${size} bytes)`);
+}
+
+if (explicit) {
+  try {
+    await access(explicit);
+  } catch {
+    console.error(`\n[igvc] no such file: ${explicit}\n`);
+    process.exit(2);
+  }
+  await install(explicit, "copied");
+  process.exit(0);
+}
 
 try {
   await access(DEST);
@@ -31,14 +56,10 @@ try {
   /* need to create it */
 }
 
-await mkdir(DEST_DIR, { recursive: true });
-
-for (const src of CANDIDATES) {
+for (const src of FALLBACKS) {
   try {
     await access(src);
-    await copyFile(src, DEST);
-    const { size } = await stat(DEST);
-    console.log(`[igvc] fixture: copied ${src} -> .fixtures/clip.webm (${size} bytes)`);
+    await install(src, "found");
     process.exit(0);
   } catch {
     /* try the next one */
@@ -46,7 +67,8 @@ for (const src of CANDIDATES) {
 }
 
 console.error(
-  "\n[igvc] no source clip found. Drop any short .webm at .fixtures/clip.webm and re-run.\n" +
-    "Tried:\n" + CANDIDATES.map((c) => `  ${c}`).join("\n") + "\n",
+  "\n[igvc] no clip found. Point this at any short .webm you have:\n" +
+    "    npm run fixture -- /path/to/clip.webm\n" +
+    "or drop one at .fixtures/clip.webm yourself.\n",
 );
 process.exit(2);
