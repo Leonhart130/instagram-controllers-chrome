@@ -228,6 +228,34 @@ async function main() {
     check("bar stays fully on screen when the video runs past the fold",
       clamped.visible === true && clamped.wrapBottom <= clamped.viewportH + 1 && clamped.wrapTop >= 0,
       `wrap ${clamped.wrapTop}-${clamped.wrapBottom} within ${clamped.viewportH}, host ${JSON.stringify(clamped.hostRect)}`);
+    // --- 4. a video removed from hit testing is still found ---------------
+    const hidden = await cdp.eval(`
+      window.__setSpacer(0);
+      window.__setVideoHitTesting(false);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const v = document.getElementById('v');
+      const r = v.getBoundingClientRect();
+      const mid = [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)];
+      return { pe: getComputedStyle(v).pointerEvents,
+               stackHasVideo: document.elementsFromPoint(mid[0], mid[1]).some((e) => e.tagName === 'VIDEO'),
+               x: mid[0], y: mid[1] };
+    `);
+    check("the video really is out of hit testing (so this test discriminates)",
+      hidden.pe === "none" && hidden.stackHasVideo === false,
+      `pointer-events:${hidden.pe}, video in hit stack: ${hidden.stackHasVideo}`);
+    await cdp.mouseMove(2, 2);
+    await sleep(200);
+    await cdp.mouseMove(hidden.x, hidden.y);
+    await cdp.mouseMove(hidden.x + 1, hidden.y + 1);
+    await sleep(400);
+    const foundAnyway = await cdp.eval(`
+      const p = window.__probe();
+      window.__setVideoHitTesting(true);
+      return { rect: p.overlay && p.overlay.rect, visible: p.overlay && p.overlay.visible, video: p.rects.feed };
+    `);
+    check("bar still finds a video that is not hit-testable",
+      foundAnyway.visible === true && JSON.stringify(foundAnyway.rect) === JSON.stringify(foundAnyway.video),
+      `bar ${JSON.stringify(foundAnyway.rect)} vs video ${JSON.stringify(foundAnyway.video)}`);
   } finally {
     cdp?.close();
     proc.kill("SIGKILL");

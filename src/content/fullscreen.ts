@@ -12,8 +12,22 @@ const ATTR_VIDEO = "data-igvc-fs";
 
 let marked: { root: HTMLElement; video: HTMLVideoElement } | null = null;
 
+/**
+ * The video we put into fullscreen, or null.
+ *
+ * Checks that our wrapper is *still* the fullscreen element, rather than that
+ * something is: fullscreen can pass directly from our wrapper to another
+ * element with no intervening null, and answering "yes" then would leave the
+ * bar chasing a video nobody is looking at.
+ */
 export function fullscreenVideo(): HTMLVideoElement | null {
-  return marked && document.fullscreenElement ? marked.video : null;
+  if (!marked || document.fullscreenElement !== marked.root) return null;
+  return marked.video;
+}
+
+/** Drop our marks unless our wrapper is still the fullscreen element. */
+export function releaseIfInactive(): void {
+  if (marked && document.fullscreenElement !== marked.root) unmark();
 }
 
 export async function toggleFullscreen(video: HTMLVideoElement): Promise<void> {

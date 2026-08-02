@@ -9,7 +9,9 @@ export const BAR_CSS = `
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
-.root { position: absolute; inset: 0; pointer-events: none; }
+/* overflow:hidden so the bar can never paint or hit-test outside the video's
+   box, whatever the sizing logic decides. */
+.root { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 
 /* Only interactive in fullscreen, where it covers the whole screen and takes
    the clicks that would otherwise reach Instagram's post link underneath.

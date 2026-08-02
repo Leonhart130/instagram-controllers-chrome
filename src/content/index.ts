@@ -35,6 +35,10 @@ let evalQueued = false;
 function onPointerMove(e: PointerEvent): void {
   pointerX = e.clientX;
   pointerY = e.clientY;
+  scheduleHover();
+}
+
+function scheduleHover(): void {
   if (evalQueued) return;
   evalQueued = true;
   requestAnimationFrame(evaluateHover);
@@ -48,15 +52,35 @@ function onPointerMove(e: PointerEvent): void {
  * post modal — or one parked off-screen inside a carousel's overflow:hidden
  * track — would win on area and steal the bar.
  */
+function bigEnough(video: HTMLVideoElement, x: number, y: number): boolean {
+  const r = video.getBoundingClientRect();
+  return (
+    r.width >= MIN_WIDTH &&
+    r.height >= MIN_HEIGHT &&
+    x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
+  );
+}
+
 function videoAtPoint(x: number, y: number): HTMLVideoElement | null {
   if (x < 0 || y < 0) return null;
-  for (const el of document.elementsFromPoint(x, y)) {
+  const stack = document.elementsFromPoint(x, y);
+
+  for (const el of stack) {
     // Our own bar, which sits above the video it belongs to.
     if (el === bar.host) return bar.video;
-    if (el instanceof HTMLVideoElement) {
-      const r = el.getBoundingClientRect();
-      if (r.width < MIN_WIDTH || r.height < MIN_HEIGHT) return null;
-      return el;
+    // `continue`, not `return null`: elementsFromPoint is a penetrating list, so
+    // a small decorative video in the stack must not abort the search for the
+    // real one underneath it.
+    if (el instanceof HTMLVideoElement && bigEnough(el, x, y)) return el;
+  }
+
+  // Nothing in the hit stack was a video. A video carrying pointer-events:none
+  // is invisible to hit testing, and putting a click-catcher over the media and
+  // taking the media out of hit testing is a very ordinary thing for a site to
+  // do. Fall back to looking for one in the subtree we did hit.
+  for (let el: Element | null = stack[0] ?? null; el && el !== document.body; el = el.parentElement) {
+    for (const video of el.querySelectorAll("video")) {
+      if (bigEnough(video, x, y)) return video;
     }
   }
   return null;
@@ -105,7 +129,17 @@ async function main(): Promise<void> {
   document.addEventListener("pointermove", onPointerMove, { capture: true, passive: true });
   document.addEventListener("pointerdown", onPointerMove, { capture: true, passive: true });
 
+  // The render loop parks itself when the bar is hidden, and only a re-evaluation
+  // wakes it. Every way the answer can change without the pointer moving needs
+  // to trigger one, or the bar simply never comes back.
+  window.addEventListener("focus", scheduleHover);
+  window.addEventListener("resize", scheduleHover);
+  document.addEventListener("scroll", scheduleHover, { capture: true, passive: true });
+
   window.addEventListener("blur", () => bar.hide());
+  // Pointer into the tab strip or the URL bar fires no blur, so without this the
+  // bar stays up and the loop runs for the life of the tab.
+  document.documentElement.addEventListener("pointerleave", () => bar.hide());
   window.addEventListener("popstate", scheduleScan);
 }
 

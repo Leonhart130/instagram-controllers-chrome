@@ -170,9 +170,62 @@ breakages were in the extension.
   only prevented on `pointerdown`, not `click`) and the bare picture were not. Per-handler
   `preventDefault` is not isolation; the isolation layer has to own it.
 
+- **7.3 A test whose fixture cannot exhibit the defect is not a test.** The harness models the post
+  link, the modal, the below-the-fold case and a video taken out of hit testing — each with a
+  companion check asserting the *fixture* is in the state that would break a wrong implementation
+  (the modal video really is the larger one; the video really does overflow; it really is
+  `pointer-events: none`). Without those, all four pass against a fixture that cannot tell right
+  from wrong.
+
 - **7.2 An overlay with `pointer-events: none` is a hole, not a shield.** Clicks in the middle of
   the fullscreen picture passed straight through the host to Instagram's click-catcher. In
   fullscreen the bar now carries a full-screen `.surface` that takes those clicks and turns them
   into play/pause. It stays inert everywhere else, because clicking a feed post to open it is
   behaviour we have no business breaking — asserted in both directions, since a fix that blocked
   navigation everywhere would make the fullscreen checks pass for the wrong reason.
+
+## §8 — ROUND 2 adversarial review
+
+Seventeen findings in round 1, fourteen more here. The one that mattered most was not in the
+extension at all — it was in the check that certified the previous fix.
+
+- **8.1 An anchor's navigation is not a listener, so do not probe it with one.** The harness
+  detected "would navigate" with a bubble-phase click listener on the `<a>` that logged when
+  `!defaultPrevented`. But activation behaviour runs after dispatch unless the event was
+  *canceled*, so `stopPropagation()` silenced the probe while the browser navigated anyway.
+  Deleting the `preventDefault()` that fixed §7.1 did not fail the suite — it **crashed** it four
+  steps later with `window.__probe is not a function`, because the page had genuinely navigated.
+  Had that check been last in the run, it would have reported green on a broken build.
+  ⭐ **Probe an effect, not an intention.** The probe now uses `href="#reel-FAKE"` and a
+  `hashchange` listener: a real default action that only `preventDefault` suppresses.
+
+- **8.2 A window bounded only by time is still global.** §5.3 replaced a 5s global user-activation
+  window with a 500ms one — same shape, same bug, smaller. Click unmute on one post and any *other*
+  video muted inside those 500 ms — including by our own `applyPrefs`, which mutes every non-active
+  video — was recorded as the user's preference and written to `chrome.storage.sync`. Intent is now
+  scoped to the element the control acted on.
+
+- **8.3 An overlay pinned to the bottom of a box must not be taller than the box.** The bar is 92px
+  and the "is there room" gate was 56px, so a post scrolled to ~70px visible drew the bar *above*
+  the video, over the previous post, at z-index 2147483000 — swallowing clicks there and keeping
+  the bar glued to the wrong post. The gate now measures the bar, and `.root` is `overflow:hidden`
+  so it can never paint or hit-test outside the video whatever the arithmetic decides.
+
+- **8.4 A loop that parks itself needs a restart for every way the answer can change.** Parking was
+  added for §5.6, but the only thing that restarted it was a pointer event. Alt-tab away and back
+  without moving the mouse, or resize the window, and the bar was simply gone. `focus`, `resize`
+  and `scroll` now re-evaluate. The mirror image was also missing: nothing hid the bar when the
+  pointer left the viewport for the tab strip, so that one exit path kept the loop running forever.
+
+- **8.5 `elementsFromPoint` is a penetrating list, and a video can be absent from it.** Two holes in
+  one function: bailing on the first too-small video aborted the search instead of continuing past a
+  decoration to the real post underneath; and a video with `pointer-events: none` — an ordinary
+  thing to do when you stack a click-catcher over your media — never appears in the hit stack at
+  all, which would have left the extension inert on the feed with no error anywhere.
+
+- **8.6 Assert the transition, not the state you happen to find later.** "play toggles playback"
+  read `paused === false` after the click, a 6s polling loop and a second click. It would have
+  passed for a control that could only ever start playback. The flip is now asserted at the click.
+
+- **8.7 A test command that does not build tests the previous build.** `npm run e2e` loaded `dist/`
+  as-is, so editing `src/` and running it reported passes for the old bundle.

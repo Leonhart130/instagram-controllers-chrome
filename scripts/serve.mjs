@@ -90,8 +90,11 @@ async function handle(req, res) {
     const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? "");
     if (range) {
       const start = range[1] ? Number(range[1]) : 0;
-      const end = range[2] ? Number(range[2]) : body.length - 1;
-      if (start >= body.length || end >= body.length || start > end) {
+      // Clamped, not rejected: RFC 7233 says a last-byte-pos past the end is
+      // satisfiable. Answering 416 would surface as the clip failing to decode
+      // mid-playback, which is the exact class of harness lie LESSONS 6.4 is about.
+      const end = Math.min(range[2] ? Number(range[2]) : body.length - 1, body.length - 1);
+      if (start >= body.length || start > end) {
         res.writeHead(416, { "content-range": `bytes */${body.length}` });
         res.end();
         return;

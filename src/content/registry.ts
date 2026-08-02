@@ -12,8 +12,13 @@ import { isEnabledHere } from "./surface";
 
 const videos = new Set<HTMLVideoElement>();
 const listeners = new WeakMap<HTMLVideoElement, AbortController>();
-/** The exact values we last wrote, so we can recognise our own volumechange. */
-const written = new WeakMap<HTMLVideoElement, { volume: number; muted: boolean }>();
+/**
+ * The values we last wrote and how many volumechange events they will produce,
+ * so we can recognise our own. The count matters: changing volume and muted in
+ * one call queues two events, and a single-slot record consumed the first and
+ * mistook the second for Instagram.
+ */
+const written = new WeakMap<HTMLVideoElement, { volume: number; muted: boolean; pending: number }>();
 /** Guards against a ping-pong war if Instagram insists on re-muting. */
 const reasserts = new WeakMap<HTMLVideoElement, number>();
 const replayTimers = new WeakMap<HTMLVideoElement, number>();
@@ -21,7 +26,8 @@ const MAX_REASSERTS = 3;
 
 /** The video the control bar is pointing at — the only one allowed to make sound. */
 let active: HTMLVideoElement | null = null;
-let intentUntil = 0;
+/** Which video the user just acted on, and until when. */
+let intent: { video: HTMLVideoElement; until: number } | null = null;
 
 export function getVideos(): ReadonlySet<HTMLVideoElement> {
   return videos;
@@ -34,9 +40,19 @@ export function getVideos(): ReadonlySet<HTMLVideoElement> {
  * after *any* gesture anywhere on the page, so an automatic Instagram re-mute
  * that lands in that window would be recorded as the user's preference and
  * persisted.
+ *
+ * Scoped to the video the control acted on, for the same reason. A window that
+ * is merely time-bounded is still global: click unmute on one post, and any
+ * other video muted within the window — including by our own applyPrefs, which
+ * mutes every non-active video — lands here and persists muted:true, undoing
+ * the click a second later and surviving the reload.
  */
-export function markUserIntent(): void {
-  intentUntil = performance.now() + 500;
+export function markUserIntent(video: HTMLVideoElement): void {
+  intent = { video, until: performance.now() + 500 };
+}
+
+function hasUserIntent(video: HTMLVideoElement): boolean {
+  return intent !== null && intent.video === video && performance.now() < intent.until;
 }
 
 export function setActiveVideo(video: HTMLVideoElement | null): void {
@@ -87,6 +103,7 @@ function forget(video: HTMLVideoElement): void {
   replayTimers.delete(video);
   videos.delete(video);
   if (active === video) active = null;
+  if (intent?.video === video) intent = null;
 }
 
 function applyPrefs(video: HTMLVideoElement): void {
@@ -103,11 +120,18 @@ function applyPrefs(video: HTMLVideoElement): void {
   // three soundtracks at the same time.
   const targetMuted = muted || video !== active ? true : mayUnmute ? false : video.muted;
 
-  if (Math.abs(video.volume - volume) < 0.001 && video.muted === targetMuted) return;
+  const volumeChanges = Math.abs(video.volume - volume) >= 0.001;
+  const muteChanges = video.muted !== targetMuted;
+  if (!volumeChanges && !muteChanges) return;
 
-  written.set(video, { volume, muted: targetMuted });
-  if (Math.abs(video.volume - volume) >= 0.001) video.volume = volume;
-  if (video.muted !== targetMuted) video.muted = targetMuted;
+  // One event per property, so record how many to expect back.
+  written.set(video, {
+    volume,
+    muted: targetMuted,
+    pending: (volumeChanges ? 1 : 0) + (muteChanges ? 1 : 0),
+  });
+  if (volumeChanges) video.volume = volume;
+  if (muteChanges) video.muted = targetMuted;
 }
 
 function onVolumeChange(video: HTMLVideoElement): void {
@@ -116,11 +140,11 @@ function onVolumeChange(video: HTMLVideoElement): void {
   // a timer is a different task source with no defined ordering between them.
   const ours = written.get(video);
   if (ours && Math.abs(video.volume - ours.volume) < 0.001 && video.muted === ours.muted) {
-    written.delete(video);
+    if (--ours.pending <= 0) written.delete(video);
     return;
   }
 
-  if (performance.now() < intentUntil) {
+  if (hasUserIntent(video)) {
     prefs.update({ volume: video.volume, muted: video.muted });
     reasserts.delete(video);
     return;

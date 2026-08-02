@@ -16,14 +16,14 @@
 
 import { ICONS } from "./icons";
 import { BAR_CSS } from "./styles";
-import { fullscreenVideo, toggleFullscreen, unmark } from "./fullscreen";
+import { fullscreenVideo, releaseIfInactive, toggleFullscreen } from "./fullscreen";
 import { markUserIntent } from "./registry";
 
 const HOST_TAG = "igvc-overlay";
 const Z_INDEX = 2147483000;
-/** Below this much of the video on screen there is nowhere to put the bar. */
-const MIN_VISIBLE_HEIGHT = 56;
 const MIN_VISIBLE_WIDTH = 80;
+/** Fallback if the bar has not been laid out yet. */
+const ASSUMED_BAR_HEIGHT = 92;
 
 const BASE_HOST_CSS = [
   "display:block",
@@ -73,7 +73,7 @@ const TEMPLATE = `
 <div class="root">
   <div class="surface"></div>
   <div class="wrap" part="wrap">
-  <div class="seek" role="slider" tabindex="-1" aria-label="Seek">
+  <div class="seek" role="slider" tabindex="0" aria-label="Seek" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
     <div class="track">
       <div class="buffered"></div>
       <div class="fill"></div>
@@ -84,7 +84,7 @@ const TEMPLATE = `
     <button class="btn play" type="button" aria-label="Play"></button>
     <div class="vol">
       <button class="btn mute" type="button" aria-label="Mute"></button>
-      <div class="volslider" role="slider" aria-label="Volume">
+      <div class="volslider" role="slider" tabindex="0" aria-label="Volume" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
         <div class="vtrack">
           <div class="vfill"></div>
           <div class="vthumb"></div>
@@ -266,7 +266,9 @@ class ControlBar {
 
     this.ensureMounted();
     if (!this.inFullscreen && !this.syncRect(video)) {
-      this.raf = 0;
+      // hide() refuses to act mid-drag, so parking here would freeze the bar
+      // on screen with evaluateHover declining to restart it.
+      this.raf = this.dragging ? requestAnimationFrame(this.tick) : 0;
       return;
     }
     this.syncState(video);
@@ -284,14 +286,22 @@ class ControlBar {
    */
   private syncRect(video: HTMLVideoElement): boolean {
     const r = video.getBoundingClientRect();
+    // clientWidth/clientHeight, not innerWidth/innerHeight: the latter include
+    // the scrollbar, and Instagram always has one.
+    const viewW = document.documentElement.clientWidth;
+    const viewH = document.documentElement.clientHeight;
     const left = Math.max(0, Math.round(r.left));
     const top = Math.max(0, Math.round(r.top));
-    const right = Math.min(innerWidth, Math.round(r.right));
-    const bottom = Math.min(innerHeight, Math.round(r.bottom));
+    const right = Math.min(viewW, Math.round(r.right));
+    const bottom = Math.min(viewH, Math.round(r.bottom));
     const width = right - left;
     const height = bottom - top;
 
-    if (width < MIN_VISIBLE_WIDTH || height < MIN_VISIBLE_HEIGHT) {
+    // The bar is anchored to the bottom of the host, so if the visible slice of
+    // the video is shorter than the bar, the bar would render *above* the video
+    // — over the previous post — and swallow clicks there at z-index 2147483000.
+    const needed = this.wrap.offsetHeight || ASSUMED_BAR_HEIGHT;
+    if (width < MIN_VISIBLE_WIDTH || height < needed) {
       this.hide();
       return false;
     }
@@ -328,6 +338,8 @@ class ControlBar {
     if (this.dragging?.kind !== "seek" && Math.abs(progress - p.progress) > 0.0005) {
       p.progress = progress;
       this.paintSeek(progress);
+      this.seek.setAttribute("aria-valuenow", String(Math.round(progress * 100)));
+      this.seek.setAttribute("aria-valuetext", `${formatTime(video.currentTime)} of ${formatTime(duration)}`);
     }
 
     const current = formatTime(video.currentTime);
@@ -357,6 +369,8 @@ class ControlBar {
       this.muteBtn.setAttribute("aria-label", video.muted ? "Unmute" : "Mute");
       this.volFill.style.width = `${effectiveVolume * 100}%`;
       this.volThumb.style.left = `${effectiveVolume * 100}%`;
+      this.volSlider.setAttribute("aria-valuenow", String(Math.round(effectiveVolume * 100)));
+      this.volSlider.setAttribute("aria-valuetext", video.muted ? "muted" : `${Math.round(effectiveVolume * 100)}%`);
     }
 
     if (p.fullscreen !== this.inFullscreen) {
@@ -364,6 +378,25 @@ class ControlBar {
       this.fsBtn.innerHTML = this.inFullscreen ? ICONS.exitFullscreen : ICONS.enterFullscreen;
       this.fsBtn.setAttribute("aria-label", this.inFullscreen ? "Exit fullscreen" : "Fullscreen");
     }
+  }
+
+  private bindSliderKeys(
+    surface: HTMLElement,
+    apply: (video: HTMLVideoElement, direction: number, toEnd: boolean) => void,
+  ): void {
+    surface.addEventListener("keydown", (e) => {
+      const video = this.video;
+      if (!video) return;
+      let direction = 0;
+      let toEnd = false;
+      if (e.key === "ArrowRight" || e.key === "ArrowUp") direction = 1;
+      else if (e.key === "ArrowLeft" || e.key === "ArrowDown") direction = -1;
+      else if (e.key === "Home") { direction = -1; toEnd = true; }
+      else if (e.key === "End") { direction = 1; toEnd = true; }
+      else return;
+      e.preventDefault();
+      apply(video, direction, toEnd);
+    });
   }
 
   private togglePlayback(): void {
@@ -416,7 +449,7 @@ class ControlBar {
     this.muteBtn.addEventListener("click", () => {
       const video = this.video;
       if (!video) return;
-      markUserIntent();
+      markUserIntent(video);
       if (video.muted && video.volume === 0) video.volume = 0.5;
       video.muted = !video.muted;
     });
@@ -437,9 +470,23 @@ class ControlBar {
     this.bindSlider(this.volSlider, this.volTrack, "volume", (ratio) => {
       const video = this.video;
       if (!video) return;
-      markUserIntent();
+      markUserIntent(video);
       video.volume = ratio;
       video.muted = ratio === 0;
+    });
+
+    this.bindSliderKeys(this.seek, (video, dir, toEnd) => {
+      const duration = usableDuration(video);
+      if (duration <= 0) return;
+      video.currentTime = toEnd
+        ? (dir > 0 ? duration : 0)
+        : Math.min(duration, Math.max(0, video.currentTime + dir * 5));
+    });
+    this.bindSliderKeys(this.volSlider, (video, dir, toEnd) => {
+      markUserIntent(video);
+      const next = toEnd ? (dir > 0 ? 1 : 0) : Math.min(1, Math.max(0, video.volume + dir * 0.05));
+      video.volume = next;
+      video.muted = next === 0;
     });
 
     document.addEventListener("fullscreenchange", this.onFullscreenChange);
@@ -511,7 +558,10 @@ class ControlBar {
     for (const side of ["right", "bottom"] as const) this.host.style.removeProperty(side);
     this.host.style.setProperty("position", "fixed", "important");
     this.ensureMounted();
-    if (!document.fullscreenElement) unmark();
+    // Unconditional: fullscreen can pass straight from our wrapper to another
+    // element, and a `if (!document.fullscreenElement)` guard would leave our
+    // attributes on Instagram's DOM for good.
+    releaseIfInactive();
   };
 }
 

@@ -303,10 +303,16 @@ async function main() {
       return true;
     `);
 
+    const pausedBeforePlay = await cdp.eval("return document.getElementById('v').paused;");
     await cdp.click(...coords.play);
     await sleep(150);
     const hits = await cdp.eval("return { hits: window.__hits, paused: document.getElementById('v').paused };");
     console.log(`     · click on .play delivered to: ${JSON.stringify(hits.hits)} paused=${hits.paused}`);
+    // The transition, measured at the click. The later read is a different
+    // claim ("still playing") and would pass even for a control that only ever
+    // moved the state one way.
+    check("the play click flips paused", hits.paused !== pausedBeforePlay,
+      `${pausedBeforePlay} -> ${hits.paused}`);
     // Seeks are clamped to the seekable range, so a click that lands correctly
     // still does nothing until the browser knows it can seek there.
     const seekable = await cdp.eval(`
@@ -436,10 +442,13 @@ async function main() {
     await cdp.mouseMove(rect.x, rect.y);
     await cdp.mouseMove(rect.x + 1, rect.y + 1);
     await sleep(300);
+    const mutedBeforeClick = await cdp.eval("return document.getElementById('v').muted;");
     await cdp.click(...coords.mute); // unmute -> should persist
     await sleep(600);
     const before = await cdp.eval("return { muted: document.getElementById('v').muted };");
-    check("mute button unmutes", before.muted === false, `muted=${before.muted}`);
+    check("the mute click flips muted", before.muted !== mutedBeforeClick,
+      `${mutedBeforeClick} -> ${before.muted}`);
+    check("mute button leaves it unmuted", before.muted === false, `muted=${before.muted}`);
 
     step("reloading for storage check");
     await cdp.send("Page.navigate", { url: ORIGIN });
