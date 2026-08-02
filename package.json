@@ -1,0 +1,18 @@
+{
+  "name": "ins-vcont",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chrome extension adding real video controls to Instagram",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node build.mjs --watch",
+    "icons": "node scripts/gen-icons.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.2.5",
+    "esbuild": "^0.28.1",
+    "typescript": "^7.0.2"
+  }
+}

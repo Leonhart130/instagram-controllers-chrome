@@ -1,0 +1,47 @@
+/*
+ * Page-level styles, injected via the manifest so they are never subject to
+ * Instagram's CSP. Everything here is scoped behind :fullscreen + an attribute
+ * we set only for the duration of a fullscreen session, so these rules cannot
+ * affect normal browsing.
+ *
+ * Why this is needed: we fullscreen the video's *wrapper* (so our control bar,
+ * which lives inside it, still renders — a fullscreened <video> cannot show
+ * child elements). The UA stylesheet only stretches the fullscreen element
+ * itself, so the <video> inside would keep its original 500px-ish layout size
+ * and sit tiny in the middle of a black screen. These rules stretch it back.
+ */
+
+[data-igvc-fs-root]:fullscreen {
+  background: #000 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+}
+
+[data-igvc-fs-root]:fullscreen video[data-igvc-fs] {
+  position: static !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: none !important;
+  max-height: none !important;
+  object-fit: contain !important;
+  transform: none !important;
+  inset: auto !important;
+}
+
+/* Instagram stacks click-catchers and gradient overlays as siblings of the
+   video. In fullscreen they are laid out by the flex rule above and end up
+   stretching the container, so take them out of flow. */
+[data-igvc-fs-root]:fullscreen > *:not(video):not(igvc-overlay) {
+  position: absolute !important;
+  inset: 0 !important;
+}

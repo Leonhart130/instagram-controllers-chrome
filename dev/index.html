@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>igvc dev harness</title>
+    <!-- In the real extension this is injected by the manifest. -->
+    <link rel="stylesheet" href="/content.css" />
+    <style>
+      body {
+        margin: 0;
+        background: #fafafa;
+        color: #111;
+        font: 14px/1.4 system-ui, sans-serif;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 16px;
+        padding: 24px;
+      }
+      /* Mimics Instagram's structure: a wrapper holding the video plus
+         click-catcher and control siblings stacked on top of it. */
+      .post {
+        width: 480px;
+        background: #fff;
+        border: 1px solid #dbdbdb;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .media {
+        position: relative;
+        width: 480px;
+        height: 600px;
+        background: #000;
+      }
+      .media video,
+      .media .frame {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+      /* Stands in for decoded frames so seeking is visible in a screenshot. */
+      .frame {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font: bold 72px ui-monospace, monospace;
+        color: #fff;
+        background: #22304a;
+      }
+      .catcher {
+        position: absolute;
+        inset: 0;
+        z-index: 5;
+        cursor: pointer;
+      }
+      .ig-mute {
+        position: absolute;
+        right: 12px;
+        bottom: 12px;
+        z-index: 6;
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        border: 0;
+        background: rgba(0, 0, 0, 0.6);
+        color: #fff;
+        cursor: pointer;
+      }
+      #log {
+        width: 480px;
+        min-height: 54px;
+        font: 12px/1.5 ui-monospace, monospace;
+        background: #111;
+        color: #7cff9b;
+        padding: 10px;
+        border-radius: 6px;
+        white-space: pre-wrap;
+      }
+      #status { font: 12px ui-monospace, monospace; color: #555; }
+    </style>
+  </head>
+  <body>
+    <div id="status">ready</div>
+
+    <div class="post">
+      <div class="media" id="media">
+        <div class="frame" id="frame">0.0s</div>
+        <video id="v" playsinline></video>
+        <div class="catcher" id="catcher"></div>
+        <button class="ig-mute" id="igmute">M</button>
+      </div>
+    </div>
+
+    <div id="log">leak log (must stay empty when clicking our bar)</div>
+
+    <script>
+      const v = document.getElementById("v");
+      const frame = document.getElementById("frame");
+      const log = (msg) => {
+        document.getElementById("log").textContent += "\n" + msg;
+        console.log("[harness]", msg);
+      };
+
+      // --- Instagram's own handlers. Any of these firing while we use the
+      // --- control bar means our event isolation is broken.
+      document.getElementById("catcher").addEventListener("click", () => log("LEAK: catcher click"));
+      document.getElementById("media").addEventListener("click", () => log("LEAK: media click"));
+      document.getElementById("igmute").addEventListener("click", (e) => {
+        e.stopPropagation();
+        v.muted = !v.muted;
+        log("IG mute button -> muted=" + v.muted);
+      });
+
+      // --- Fake media clock -------------------------------------------------
+      // Brave will not decode a MediaRecorder blob, and a real codec is not what
+      // we are testing. The extension only ever touches duration / currentTime /
+      // paused / buffered / play() / pause() and the matching events, so we
+      // shadow exactly those and leave volume + muted native.
+      const DURATION = 30;
+      let time = 0;
+      let paused = true;
+      let ticker = null;
+
+      const defineOn = (obj, name, desc) => Object.defineProperty(obj, name, { configurable: true, ...desc });
+
+      defineOn(v, "duration", { get: () => DURATION });
+      defineOn(v, "paused", { get: () => paused });
+      defineOn(v, "readyState", { get: () => 4 });
+      defineOn(v, "buffered", {
+        get: () => ({ length: 1, start: () => 0, end: () => Math.min(DURATION, time + 6) }),
+      });
+      defineOn(v, "currentTime", {
+        get: () => time,
+        set: (t) => {
+          time = Math.min(DURATION, Math.max(0, Number(t) || 0));
+          render();
+          v.dispatchEvent(new Event("seeking"));
+          v.dispatchEvent(new Event("seeked"));
+          v.dispatchEvent(new Event("timeupdate"));
+        },
+      });
+      defineOn(v, "play", {
+        value: () => {
+          if (!paused) return Promise.resolve();
+          paused = false;
+          v.dispatchEvent(new Event("play"));
+          v.dispatchEvent(new Event("playing"));
+          ticker = setInterval(() => {
+            time = Math.min(DURATION, time + 0.1);
+            render();
+            v.dispatchEvent(new Event("timeupdate"));
+            if (time >= DURATION) v.pause();
+          }, 100);
+          return Promise.resolve();
+        },
+      });
+      defineOn(v, "pause", {
+        value: () => {
+          if (paused) return;
+          paused = true;
+          clearInterval(ticker);
+          v.dispatchEvent(new Event("pause"));
+        },
+      });
+
+      function render() {
+        frame.textContent = time.toFixed(1) + "s";
+        frame.style.background = `hsl(${Math.round((time / DURATION) * 300)} 45% 28%)`;
+      }
+      render();
+
+      v.dispatchEvent(new Event("loadedmetadata"));
+
+      // Inspection hook for the driver.
+      window.__probe = () => ({
+        time: Number(time.toFixed(2)),
+        paused,
+        volume: Number(v.volume.toFixed(3)),
+        muted: v.muted,
+        leaks: document.getElementById("log").textContent.split("\n").filter((l) => l.startsWith("LEAK")),
+        overlay: (() => {
+          const host = document.querySelector("igvc-overlay");
+          if (!host) return null;
+          const r = host.getBoundingClientRect();
+          const wrap = host.shadowRoot.querySelector(".wrap");
+          return {
+            rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)],
+            visible: wrap.classList.contains("on"),
+            parent: host.parentElement.tagName + (host.parentElement.id ? "#" + host.parentElement.id : ""),
+            time: host.shadowRoot.querySelector(".cur").textContent + " / " + host.shadowRoot.querySelector(".dur").textContent,
+            fillWidth: host.shadowRoot.querySelector(".seek .fill").style.width,
+          };
+        })(),
+      });
+    </script>
+    <script src="/content.js"></script>
+  </body>
+</html>
