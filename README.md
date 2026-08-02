@@ -35,9 +35,16 @@ npm run build      # minified production build into dist/
 npm run typecheck  # tsc --noEmit
 npm run serve      # dev server for the harness (http :8731, https :8732)
 npm run fixture    # one-off: put a real .webm at .fixtures/clip.webm
+npm run check      # build, then both suites below (31 checks)
+npm run harness    # main-world checks against the harness
 npm run e2e        # drive the built extension in a throwaway browser
 npm run icons      # regenerate public/icons/*.png
 ```
+
+With `npm run serve` running in another terminal, `npm run check` is the one
+command that says whether anything is broken. Both suites exit 2 on failure and
+print a sentinel (`HARNESS_OK`, `E2E_OK`) on success, so a run that dies early
+cannot be mistaken for a clean one.
 
 ### The dev harness
 
@@ -77,7 +84,21 @@ isolation, and a `chrome.storage.sync` round trip across a reload.
 
 It deliberately does **not** test the render loop's frame-parking: that is measured by patching
 `requestAnimationFrame`, which the isolated world does not share, so it would always read zero and
-look like a pass. That check lives in the localhost harness. See `LESSONS.md` §6.
+look like a pass. That check lives in `npm run harness`. See `LESSONS.md` §6.
+
+### The harness checks
+
+`npm run harness` drives the *localhost* harness — the bundle as a page script — in a browser the
+script owns. That last part is the point: through a browser automation extension the tab kept
+dropping to `visibilityState: "hidden"`, which pauses `requestAnimationFrame` and makes every
+timing result meaningless. A browser this script launches reports `visible`.
+
+It covers the three claims the extension suite structurally cannot reach: that the render loop
+runs while the bar is shown and **parks** when it is hidden, that the bar binds to the topmost
+video rather than one behind a modal, and that a video running past the fold still gets a bar on
+screen. Two of its checks exist only to prove the other two can fail — that the modal video really
+is the larger one, and that the video really does overflow the fold. Without those, both tests
+would pass against a fixture that could not tell right from wrong.
 
 ## How it works
 

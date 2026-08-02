@@ -11,7 +11,9 @@
     "fixture": "node scripts/fixture.mjs",
     "e2e": "node scripts/e2e.mjs",
     "icons": "node scripts/gen-icons.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "harness": "node scripts/harness.mjs",
+    "check": "npm run build && npm run harness && npm run e2e"
   },
   "devDependencies": {
     "@types/chrome": "^0.2.5",

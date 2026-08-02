@@ -127,7 +127,12 @@ breakages were in the extension.
   its own `window`, so patching the page's `requestAnimationFrame` counts nothing the content
   script does — and reads **zero**, which is indistinguishable from "the loop is correctly parked".
   ⭐ A cross-world measurement that can only ever return the passing value is worse than no
-  measurement. That check is now scoped to the localhost harness and says so.
+  measurement. That check lives in `npm run harness`, against the bundle as a page script.
+
+  ⭐ **Two readings of one probe under opposite conditions beat a break-and-restore.** The parking
+  check reports 20 frames over 20 native while the bar is shown and 0 over 20 while it is hidden.
+  The zero is trustworthy *because the same probe just read twenty* — no perturbing the source, no
+  restoring it afterwards, and the control can never be forgotten because it is the check.
 
 - **6.3 `instagram.com` is on Chromium's HSTS preload list.** `http://www.instagram.com` is
   upgraded to HTTPS before any command-line flag is consulted — `--disable-features=…` does not
