@@ -40,7 +40,7 @@ npm run typecheck  # tsc --noEmit
 npm run serve      # dev server for the harness (http :8731, https :8732)
 npm run fixture    # one-off: put a real .webm at .fixtures/clip.webm
                    #   npm run fixture -- /path/to/any-short-clip.webm
-npm run check      # build, then both suites below (31 checks)
+npm run check      # build, then both suites below (35 checks)
 npm run harness    # main-world checks against the harness
 npm run e2e        # drive the built extension in a throwaway browser
 npm run icons      # regenerate public/icons/*.png
@@ -147,3 +147,7 @@ segment progress bar and pause-on-hold that the bar can fight with.
 
 Playback speed, keyboard shortcuts, picture-in-picture, and an options page. The bar is laid out
 so speed and PiP drop into the control row without restructuring anything.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE).

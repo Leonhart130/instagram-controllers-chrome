@@ -1,8 +1,12 @@
 {
   "name": "ins-vcont",
   "version": "0.1.0",
-  "private": true,
   "description": "Chrome extension adding real video controls to Instagram",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Leonhart130/instagram-controllers-chrome.git"
+  },
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
