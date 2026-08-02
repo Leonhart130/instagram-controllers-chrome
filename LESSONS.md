@@ -306,3 +306,21 @@ detect what they claimed to certify.
   whole mechanism was an anchor's default action. It also quoted an empty leak log without a
   negative control. Both are §2.1 and §7.3 recurring on a new fixture, which is where they will
   always recur.
+
+## §11 — Closing the audit
+
+Asked whether all 44 findings from the three review rounds were actually fixed, the honest answer
+required checking rather than remembering. Forty-two were. Two were not, both from round 2, and
+both had been reported clearly — they were simply lost among twelve other fixes in the same pass.
+
+- **11.1 Two gates on the same question must be the same gate.** The hit test asked "is this video
+  big enough" of the element's *full* rect; the bar asked "can I draw here" of the *visible* slice.
+  A video scrolled down to a sliver passed one and failed the other, so every pointermove ran
+  `show()` then `hide()`. Measured: **87 shown/hidden flips in 700 ms**, ended stuck shown. The bar
+  now reads its requirement from one place and the hit test uses that number.
+
+- **11.2 A batch of fixes needs its own checklist.** Nothing caught these for two rounds because
+  "I fixed the review findings" was never verified against the list, only asserted — the exact
+  failure the whole verify-not-trust discipline exists to prevent, applied to my own work rather
+  than to an agent's. ⭐ **Re-read the findings list against the code after applying it**, the same
+  way a report from anyone else would be re-run.

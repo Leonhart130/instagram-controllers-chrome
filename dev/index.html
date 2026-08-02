@@ -173,6 +173,30 @@
       window.__setVideoHitTesting = (on) => {
         document.getElementById("v").style.pointerEvents = on ? "auto" : "none";
       };
+      /** Counts shown/hidden flips while the driver moves the pointer around. */
+      window.__countBarToggles = async (ms, move) => {
+        const host = document.querySelector("igvc-overlay");
+        if (!host) return { toggles: 0, noBar: true };
+        const wrap = host.shadowRoot.querySelector(".wrap");
+        let last = wrap.classList.contains("on");
+        let toggles = 0;
+        const mo = new MutationObserver(() => {
+          const now = wrap.classList.contains("on");
+          if (now !== last) { last = now; toggles++; }
+        });
+        mo.observe(wrap, { attributes: true, attributeFilter: ["class"] });
+        const t0 = performance.now();
+        let i = 0;
+        while (performance.now() - t0 < ms) {
+          document.dispatchEvent(new PointerEvent("pointermove", {
+            clientX: move.x + (i++ % 2), clientY: move.y, bubbles: true,
+          }));
+          await new Promise((r) => requestAnimationFrame(r));
+        }
+        mo.disconnect();
+        return { toggles, shown: wrap.classList.contains("on") };
+      };
+
       window.__resetLog = () => {
         document.getElementById("log").textContent = "leak log";
         if (location.hash) history.replaceState(null, "", location.pathname + location.search);

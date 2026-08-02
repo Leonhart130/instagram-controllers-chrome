@@ -368,6 +368,38 @@ async function main() {
       JSON.stringify(clipped));
     await cdp.eval("window.__setMediaHeight(600); document.querySelector('igvc-overlay').shadowRoot.querySelector('.ratemenu').hidden = true; return true;");
 
+    // --- 5c. no flicker on a video scrolled down to a sliver ----------------
+    // The hit test and the draw test must agree. When they did not, a video with
+    // less on screen than the bar is tall was accepted as "under the pointer"
+    // and rejected as "too short to draw on", so every pointermove flipped the
+    // bar on and straight back off.
+    const sliver = await cdp.eval(`
+      window.__setMediaHeight(600);
+      window.__setSpacer(0);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const top = document.getElementById('v').getBoundingClientRect().top;
+      // Leave ~60px of the video on screen: less than the bar's 92px, more than nothing.
+      window.__setSpacer(Math.round(innerHeight - 60 - top));
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const r2 = document.getElementById('v').getBoundingClientRect();
+      return { visible: Math.round(Math.min(innerHeight, r2.bottom) - Math.max(0, r2.top)),
+               fullHeight: Math.round(r2.height),
+               x: Math.round(r2.left + r2.width / 2), y: Math.round(innerHeight - 30) };
+    `);
+    check("only a sliver of the video is on screen, but the element is tall (so this discriminates)",
+      sliver.visible > 0 && sliver.visible < 92 && sliver.fullHeight >= 90,
+      `${sliver.visible}px visible of a ${sliver.fullHeight}px element`);
+
+    await cdp.mouseMove(2, 2);
+    await sleep(200);
+    const flicker = await cdp.eval(`
+      return await window.__countBarToggles(700, { x: ${sliver.x}, y: ${sliver.y} });
+    `);
+    check("the bar does not flicker over a video too short to draw on",
+      flicker.toggles === 0 && flicker.shown === false,
+      `${flicker.toggles} shown/hidden flips, ended ${flicker.shown ? "shown" : "hidden"}`);
+    await cdp.eval("window.__setSpacer(0); return true;");
+
     // --- 6. the surface gate -----------------------------------------------
     // Both directions, or "it works on reels" is indistinguishable from
     // "it works everywhere and the gate does nothing".

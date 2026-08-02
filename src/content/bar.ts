@@ -209,6 +209,21 @@ class ControlBar {
     return this.dragging !== null;
   }
 
+  /**
+   * How much of a video must be on screen for the bar to be drawable.
+   *
+   * Exposed so the hit test uses the same number. When the two disagreed, a
+   * part-scrolled video was accepted as "under the pointer" and then rejected
+   * as "too short to draw on", so every pointermove ran show() then hide().
+   */
+  get requiredHeight(): number {
+    return this.wrap.offsetHeight || ASSUMED_BAR_HEIGHT;
+  }
+
+  get requiredWidth(): number {
+    return MIN_VISIBLE_WIDTH;
+  }
+
   // ---------------------------------------------------------------- lifecycle
 
   attachTo(video: HTMLVideoElement): void {
@@ -511,7 +526,7 @@ class ControlBar {
     // Stopped but never prevented: preventing wheel would trap the feed's
     // scroll whenever the pointer happened to be over the bar, and preventing
     // keys could swallow Escape on the way out of fullscreen.
-    for (const type of ["wheel", "keydown", "keyup"] as const) {
+    for (const type of ["wheel", "keydown", "keyup", "contextmenu"] as const) {
       this.root.addEventListener(type, (e) => e.stopPropagation());
     }
 

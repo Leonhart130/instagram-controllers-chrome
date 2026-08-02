@@ -61,11 +61,18 @@ function scheduleHover(): void {
  */
 function bigEnough(video: HTMLVideoElement, x: number, y: number): boolean {
   const r = video.getBoundingClientRect();
-  return (
-    r.width >= MIN_WIDTH &&
-    r.height >= MIN_HEIGHT &&
-    x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
-  );
+  if (r.width < MIN_WIDTH || r.height < MIN_HEIGHT) return false;
+  if (x < r.left || x > r.right || y < r.top || y > r.bottom) return false;
+
+  // The same criterion the bar uses to decide it can draw. If the two disagree,
+  // a video scrolled until only a sliver shows is accepted here and rejected
+  // there, and every pointermove over it runs show() then hide() — a flicker
+  // along the top and bottom edges of a scrolling feed.
+  const viewW = document.documentElement.clientWidth;
+  const viewH = document.documentElement.clientHeight;
+  const visibleH = Math.min(viewH, r.bottom) - Math.max(0, r.top);
+  const visibleW = Math.min(viewW, r.right) - Math.max(0, r.left);
+  return visibleH >= bar.requiredHeight && visibleW >= bar.requiredWidth;
 }
 
 function videoAtPoint(x: number, y: number): HTMLVideoElement | null {
