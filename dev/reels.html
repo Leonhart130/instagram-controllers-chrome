@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>igvc reels harness</title>
+    <link rel="stylesheet" href="/content.css" />
+    <style>
+      html, body { margin: 0; height: 100%; background: #000; color: #fff; font: 14px system-ui, sans-serif; }
+      /* Reels are a snap-scrolling column of full-viewport items. Scrolling from
+         one to the next changes which video is under a motionless pointer,
+         which is the behaviour this fixture exists to reproduce. */
+      #feed { height: 100vh; overflow-y: scroll; scroll-snap-type: y mandatory; }
+      .reel {
+        position: relative;
+        height: 100vh;
+        scroll-snap-align: start;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .reel video {
+        height: 100%;
+        width: auto;
+        max-width: 100%;
+        background: #111;
+        object-fit: cover;
+      }
+      /* Instagram's own click-catcher, over the media. */
+      .catcher { position: absolute; inset: 0; z-index: 5; cursor: pointer; }
+      /* Instagram's own thin progress line, pinned to the very bottom. */
+      .igprogress {
+        position: absolute;
+        left: 0; right: 0; bottom: 0;
+        height: 3px;
+        z-index: 6;
+        background: rgba(255, 255, 255, .3);
+      }
+      .igprogress > i { display: block; height: 100%; width: 30%; background: #fff; }
+      #log {
+        position: fixed; left: 8px; bottom: 8px; z-index: 9;
+        max-width: 40vw;
+        font: 11px/1.4 ui-monospace, monospace;
+        background: rgba(0, 0, 0, .8); color: #7cff9b;
+        padding: 6px 8px; border-radius: 6px; white-space: pre-wrap;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="feed">
+      <div class="reel" id="reel0">
+        <video id="v" src="/clip.webm" preload="auto" playsinline loop></video>
+        <div class="catcher" data-reel="0"></div>
+        <div class="igprogress"><i></i></div>
+      </div>
+      <div class="reel" id="reel1">
+        <video id="v2" src="/clip.webm" preload="auto" playsinline loop></video>
+        <div class="catcher" data-reel="1"></div>
+        <div class="igprogress"><i></i></div>
+      </div>
+    </div>
+
+    <div id="log">reels harness</div>
+
+    <script>
+      const v = document.getElementById("v");
+      const v2 = document.getElementById("v2");
+      const feed = document.getElementById("feed");
+      const log = (m) => {
+        document.getElementById("log").textContent += "\n" + m;
+        console.log("[reels]", m);
+      };
+
+      for (const c of document.querySelectorAll(".catcher")) {
+        c.addEventListener("click", () => log("LEAK: catcher " + c.dataset.reel));
+      }
+
+      const ready = (el) =>
+        el.readyState >= 1
+          ? Promise.resolve()
+          : new Promise((res) => {
+              el.addEventListener("loadedmetadata", res, { once: true });
+              el.addEventListener("error", res, { once: true });
+            });
+      window.__ready = Promise.all([ready(v), ready(v2)]).then(() => v.readyState >= 1 && v2.readyState >= 1);
+
+      const box = (el) => { const r = el.getBoundingClientRect();
+        return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; };
+
+      window.__resetLog = () => { document.getElementById("log").textContent = "reels harness"; };
+      /** Snap to a reel the way the scroll container does, with no pointer movement. */
+      window.__scrollToReel = (i) => { feed.scrollTop = i * feed.clientHeight; };
+      window.__playBoth = async () => { await v.play().catch(() => {}); await v2.play().catch(() => {}); };
+
+      window.__probe = () => ({
+        // Same shape as the feed harness so shared checks keep working.
+        feed: { t: Number(v.currentTime.toFixed(2)), paused: v.paused, muted: v.muted,
+                volume: Number(v.volume.toFixed(2)),
+                duration: Number.isFinite(v.duration) ? Number(v.duration.toFixed(2)) : null },
+        leaks: document.getElementById("log").textContent.split("\n").filter((l) => l.startsWith("LEAK")),
+        overlay: (() => {
+          const host = document.querySelector("igvc-overlay");
+          if (!host) return null;
+          const sr = host.shadowRoot;
+          return {
+            rect: box(host),
+            visible: sr.querySelector(".wrap").classList.contains("on"),
+            parent: host.parentElement.tagName + (host.parentElement.id ? "#" + host.parentElement.id : ""),
+            time: sr.querySelector(".cur").textContent + " / " + sr.querySelector(".dur").textContent,
+            rate: sr.querySelector(".rate").textContent,
+          };
+        })(),
+        rects: { feed: box(v), reel0: box(v), reel1: box(v2) },
+        muted: { reel0: v.muted, reel1: v2.muted },
+        scrollTop: Math.round(feed.scrollTop),
+      });
+
+      if (!/(^|\.)instagram\.com$/.test(location.hostname)) {
+        const s = document.createElement("script");
+        s.src = "/content.js";
+        document.body.appendChild(s);
+      }
+    </script>
+  </body>
+</html>

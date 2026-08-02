@@ -45,16 +45,17 @@ npm run typecheck  # tsc --noEmit
 npm run serve      # dev server for the harness (http :8731, https :8732)
 npm run fixture    # one-off: put a real .webm at .fixtures/clip.webm
                    #   npm run fixture -- /path/to/any-short-clip.webm
-npm run check      # build, then both suites below (44 checks)
+npm run check      # build, then all three suites below (52 checks)
 npm run harness    # main-world checks against the harness
+npm run reels      # reels-specific checks (snap-scroll retargeting)
 npm run e2e        # drive the built extension in a throwaway browser
 npm run icons      # regenerate public/icons/*.png
 ```
 
 With `npm run serve` running in another terminal, `npm run check` is the one
-command that says whether anything is broken. Both suites exit 2 on failure and
-print a sentinel (`HARNESS_OK`, `E2E_OK`) on success, so a run that dies early
-cannot be mistaken for a clean one.
+command that says whether anything is broken. Each suite exits 2 on failure and
+prints a sentinel (`HARNESS_OK`, `REELS_OK`, `E2E_OK`) on success, so a run that
+dies early cannot be mistaken for a clean one.
 
 ### The dev harness
 
@@ -109,6 +110,19 @@ video rather than one behind a modal, and that a video running past the fold sti
 screen. Two of its checks exist only to prove the other two can fail — that the modal video really
 is the larger one, and that the video really does overflow the fold. Without those, both tests
 would pass against a fixture that could not tell right from wrong.
+
+### The reels checks
+
+`npm run reels` drives `dev/reels.html`, a snap-scrolling column of full-viewport
+items. Reels differ from the feed in one way that matters to a hover-driven bar:
+**the video under a motionless pointer changes**, because the column scrolls a new
+item into place. Nothing else in the suite exercises that — everywhere else, the
+pointer moves to change which video is current.
+
+It also checks that unmuting on reels unmutes *one* video and not every mounted
+one, after first unmuting through the bar so the preference is actually
+"unmuted" — asserting against the default muted state would pass without testing
+anything.
 
 ## How it works
 
