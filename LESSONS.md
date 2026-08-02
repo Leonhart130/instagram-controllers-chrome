@@ -63,3 +63,48 @@ it produced. Read before changing the event handling, the harness, or the fullsc
 - **4.2 Swallowed rejections make the above indistinguishable from a bug.** `toggleFullscreen()`
   originally ended in `.catch(() => {})`, so a refusal looked identical to a silent no-op. It now
   logs the reason.
+
+- **4.3 A measurement that cannot run must say "inconclusive", never "pass".** The check that the
+  rAF loop parks when hidden counts extension frames against *native* frames. In a hidden tab both
+  are zero — which reads as "the loop is parked" if you only look at the first number. Reporting
+  `nativeFrames` alongside is what makes a zero legible as "this did not measure anything".
+
+## §5 — What an adversarial review round found that execution did not
+
+A read-only reviewer was pointed at the tree with the verified facts supplied up front, so it
+would attack the unmeasured parts instead of re-deriving the measured ones. Seventeen findings;
+these are the ones worth remembering as rules.
+
+- **5.1 A rectangle hit test is not a hit test.** Choosing the video under the pointer by "smallest
+  containing rect" is backwards: the *occluded* video is usually the smaller one. With the post
+  modal open over a still-mounted feed, the bar bound itself to the feed video behind the modal —
+  wrong duration, and play/seek driving something invisible. `document.elementsFromPoint` already
+  knows about occlusion, ancestor clipping and the top layer. ⭐ Proven with a modal video
+  deliberately made **larger** in area than the feed one, so the old logic picks wrong and the new
+  one picks right: a fixture both versions pass proves nothing.
+
+- **5.2 A content script cannot patch the page's `history`.** Assigning `history.pushState` from an
+  isolated world only shadows the isolated world's own wrapper; Instagram resolves the method
+  through the main world and never touches the patch. It silently observes **nothing** — no error,
+  no warning. SPA navigation is polled from work already happening each frame instead.
+
+- **5.3 `navigator.userActivation.isActive` does not mean "the user did this".** It stays true for
+  ~5s after *any* gesture anywhere on the page. Using it to decide whether a `volumechange` was
+  user-driven meant an automatic Instagram re-mute landing in that window got written to
+  `chrome.storage.sync` as the user's preference. Intent must be signalled by the control that
+  actually handled the click.
+
+- **5.4 `Node.contains()` is reflexive.** `fsElement.contains(video)` is true when
+  `fsElement === video`, so the fallback path that fullscreens the `<video>` itself passed an
+  ownership check it should have failed, and appended the bar inside a `<video>` — where children
+  are fallback content and never render, while the state machine believed the bar was up.
+
+- **5.5 A `:fullscreen` rule that touches siblings inflates the page's own controls.** Laying the
+  wrapper out as a centred flex container forced every non-video child to `position:absolute` to
+  stop them stretching it — which also stretched Instagram's 30px round mute button into a
+  full-screen dark ellipse that swallowed clicks. Size only the video; absolutely positioned
+  overlays are already correct and want no help.
+
+- **5.6 An event loop that never parks is a leak with no leak.** One hover left a
+  `getBoundingClientRect()` plus five `!important` style writes running every frame for the life of
+  the page, because leaving the video calls `hide()` and only `detach()` stopped the loop.

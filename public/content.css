@@ -13,9 +13,6 @@
 
 [data-igvc-fs-root]:fullscreen {
   background: #000 !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
   width: 100% !important;
   height: 100% !important;
   max-width: none !important;
@@ -25,8 +22,18 @@
   overflow: hidden !important;
 }
 
+/*
+ * Deliberately no flex centring here, and deliberately nothing that touches the
+ * video's siblings. An earlier version laid the wrapper out as a centred flex
+ * container and then had to force every non-video child to position:absolute to
+ * stop them stretching it — which also inflated Instagram's own painted
+ * siblings, turning a 30px round mute button into a full-screen dark ellipse
+ * that swallowed clicks. Sizing only the video leaves their absolutely
+ * positioned overlays exactly where they were.
+ */
 [data-igvc-fs-root]:fullscreen video[data-igvc-fs] {
   position: static !important;
+  display: block !important;
   width: 100% !important;
   height: 100% !important;
   min-width: 0 !important;
@@ -36,12 +43,4 @@
   object-fit: contain !important;
   transform: none !important;
   inset: auto !important;
-}
-
-/* Instagram stacks click-catchers and gradient overlays as siblings of the
-   video. In fullscreen they are laid out by the flex rule above and end up
-   stretching the container, so take them out of flow. */
-[data-igvc-fs-root]:fullscreen > *:not(video):not(igvc-overlay) {
-  position: absolute !important;
-  inset: 0 !important;
 }

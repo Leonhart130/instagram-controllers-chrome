@@ -37,22 +37,19 @@ export function isEnabledHere(): boolean {
   return ENABLED.has(surfaceOf());
 }
 
-/** Fires on SPA navigation, which never triggers a page load on Instagram. */
-export function onLocationChange(cb: () => void): void {
-  let last = location.href;
-  const check = () => {
-    if (location.href === last) return;
-    last = location.href;
-    cb();
-  };
+let lastHref = location.href;
 
-  for (const name of ["pushState", "replaceState"] as const) {
-    const original = history[name];
-    history[name] = function (this: History, ...args: never[]) {
-      const result = (original as (...a: never[]) => unknown).apply(this, args);
-      queueMicrotask(check);
-      return result;
-    } as History[typeof name];
-  }
-  window.addEventListener("popstate", check);
+/**
+ * True exactly once per SPA navigation.
+ *
+ * Deliberately polled rather than hooked: a content script runs in an isolated
+ * world, so assigning `history.pushState` there only shadows the isolated
+ * world's own wrapper. Instagram's page script resolves the method through the
+ * main world and would never touch the patched version, so a hook silently
+ * observes nothing. Callers poll this from work they already do every frame.
+ */
+export function consumeLocationChange(): boolean {
+  if (location.href === lastHref) return false;
+  lastHref = location.href;
+  return true;
 }

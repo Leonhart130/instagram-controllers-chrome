@@ -17,6 +17,7 @@
         gap: 16px;
         padding: 24px;
       }
+      #spacer { height: 0; flex: none; }
       /* Mimics Instagram's structure: a wrapper holding the video plus
          click-catcher and control siblings stacked on top of it. */
       .post {
@@ -48,25 +49,32 @@
         color: #fff;
         background: #22304a;
       }
-      .catcher {
-        position: absolute;
-        inset: 0;
-        z-index: 5;
-        cursor: pointer;
-      }
+      .catcher { position: absolute; inset: 0; z-index: 5; cursor: pointer; }
       .ig-mute {
         position: absolute;
-        right: 12px;
-        bottom: 12px;
+        right: 12px; bottom: 12px;
         z-index: 6;
-        width: 30px;
-        height: 30px;
+        width: 30px; height: 30px;
         border-radius: 50%;
         border: 0;
         background: rgba(0, 0, 0, 0.6);
         color: #fff;
         cursor: pointer;
       }
+
+      /* The post modal, which Instagram renders OVER a still-mounted feed. */
+      #modal {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        background: rgba(0, 0, 0, 0.7);
+        align-items: center;
+        justify-content: center;
+      }
+      #modal.open { display: flex; }
+      #modal .media { width: 520px; height: 640px; }
+
       #log {
         width: 480px;
         min-height: 54px;
@@ -82,6 +90,7 @@
   </head>
   <body>
     <div id="status">ready</div>
+    <div id="spacer"></div>
 
     <div class="post">
       <div class="media" id="media">
@@ -94,9 +103,17 @@
 
     <div id="log">leak log (must stay empty when clicking our bar)</div>
 
+    <!-- Larger in area than the feed video on purpose: a hit test that picks
+         the smallest match would choose the wrong one. -->
+    <div id="modal">
+      <div class="media" id="media2">
+        <div class="frame" id="frame2">0.0s</div>
+        <video id="v2" playsinline></video>
+        <div class="catcher" id="catcher2"></div>
+      </div>
+    </div>
+
     <script>
-      const v = document.getElementById("v");
-      const frame = document.getElementById("frame");
       const log = (msg) => {
         document.getElementById("log").textContent += "\n" + msg;
         console.log("[harness]", msg);
@@ -106,8 +123,10 @@
       // --- control bar means our event isolation is broken.
       document.getElementById("catcher").addEventListener("click", () => log("LEAK: catcher click"));
       document.getElementById("media").addEventListener("click", () => log("LEAK: media click"));
+      document.addEventListener("keydown", () => log("LEAK: document keydown"));
       document.getElementById("igmute").addEventListener("click", (e) => {
         e.stopPropagation();
+        const v = document.getElementById("v");
         v.muted = !v.muted;
         log("IG mute button -> muted=" + v.muted);
       });
@@ -117,81 +136,112 @@
       // we are testing. The extension only ever touches duration / currentTime /
       // paused / buffered / play() / pause() and the matching events, so we
       // shadow exactly those and leave volume + muted native.
-      const DURATION = 30;
-      let time = 0;
-      let paused = true;
-      let ticker = null;
+      function fakeClock(v, frame, DURATION) {
+        let time = 0, paused = true, ticker = null;
+        const def = (name, desc) => Object.defineProperty(v, name, { configurable: true, ...desc });
+        const render = () => {
+          frame.textContent = time.toFixed(1) + "s";
+          frame.style.background = `hsl(${Math.round((time / DURATION) * 300)} 45% 28%)`;
+        };
 
-      const defineOn = (obj, name, desc) => Object.defineProperty(obj, name, { configurable: true, ...desc });
-
-      defineOn(v, "duration", { get: () => DURATION });
-      defineOn(v, "paused", { get: () => paused });
-      defineOn(v, "readyState", { get: () => 4 });
-      defineOn(v, "buffered", {
-        get: () => ({ length: 1, start: () => 0, end: () => Math.min(DURATION, time + 6) }),
-      });
-      defineOn(v, "currentTime", {
-        get: () => time,
-        set: (t) => {
-          time = Math.min(DURATION, Math.max(0, Number(t) || 0));
-          render();
-          v.dispatchEvent(new Event("seeking"));
-          v.dispatchEvent(new Event("seeked"));
-          v.dispatchEvent(new Event("timeupdate"));
-        },
-      });
-      defineOn(v, "play", {
-        value: () => {
-          if (!paused) return Promise.resolve();
-          paused = false;
-          v.dispatchEvent(new Event("play"));
-          v.dispatchEvent(new Event("playing"));
-          ticker = setInterval(() => {
-            time = Math.min(DURATION, time + 0.1);
+        def("duration", { get: () => DURATION });
+        def("paused", { get: () => paused });
+        def("readyState", { get: () => 4 });
+        def("buffered", { get: () => ({ length: 1, start: () => 0, end: () => Math.min(DURATION, time + 6) }) });
+        def("currentTime", {
+          get: () => time,
+          set: (t) => {
+            time = Math.min(DURATION, Math.max(0, Number(t) || 0));
             render();
+            v.dispatchEvent(new Event("seeking"));
+            v.dispatchEvent(new Event("seeked"));
             v.dispatchEvent(new Event("timeupdate"));
-            if (time >= DURATION) v.pause();
-          }, 100);
-          return Promise.resolve();
-        },
-      });
-      defineOn(v, "pause", {
-        value: () => {
-          if (paused) return;
-          paused = true;
-          clearInterval(ticker);
-          v.dispatchEvent(new Event("pause"));
-        },
-      });
+          },
+        });
+        def("play", {
+          value: () => {
+            if (!paused) return Promise.resolve();
+            paused = false;
+            v.dispatchEvent(new Event("play"));
+            v.dispatchEvent(new Event("playing"));
+            ticker = setInterval(() => {
+              time = Math.min(DURATION, time + 0.1);
+              render();
+              v.dispatchEvent(new Event("timeupdate"));
+              if (time >= DURATION) v.pause();
+            }, 100);
+            return Promise.resolve();
+          },
+        });
+        def("pause", {
+          value: () => {
+            if (paused) return;
+            paused = true;
+            clearInterval(ticker);
+            v.dispatchEvent(new Event("pause"));
+          },
+        });
 
-      function render() {
-        frame.textContent = time.toFixed(1) + "s";
-        frame.style.background = `hsl(${Math.round((time / DURATION) * 300)} 45% 28%)`;
+        render();
+        v.dispatchEvent(new Event("loadedmetadata"));
+        return { reset: () => { time = 0; paused = true; clearInterval(ticker); render(); } };
       }
-      render();
 
-      v.dispatchEvent(new Event("loadedmetadata"));
+      const feed = fakeClock(document.getElementById("v"), document.getElementById("frame"), 30);
+      const modal = fakeClock(document.getElementById("v2"), document.getElementById("frame2"), 12);
 
-      // Inspection hook for the driver.
+      // --- Driver hooks -----------------------------------------------------
+      window.__openModal = () => document.getElementById("modal").classList.add("open");
+      window.__closeModal = () => document.getElementById("modal").classList.remove("open");
+      window.__setSpacer = (px) => { document.getElementById("spacer").style.height = px + "px"; };
+      window.__resetLog = () => { document.getElementById("log").textContent = "leak log"; };
+
+      // Counts real animation frames so we can prove the bar's loop parks when
+      // it has nothing to draw, instead of running a forced layout forever.
+      window.__rafCount = 0;
+      const nativeRaf = window.requestAnimationFrame.bind(window);
+      window.requestAnimationFrame = (cb) => { window.__rafCount++; return nativeRaf(cb); };
+      // Uncounted, so the driver can tick real frames without polluting the
+      // number it is measuring — and can tell "loop parked" from "tab hidden".
+      window.__nativeRaf = nativeRaf;
+      // Always settles: in a hidden tab rAF never fires, and an unguarded await
+      // here hangs the driver for 45s looking exactly like a renderer freeze.
+      // nativeFrames === 0 in the result means "inconclusive", not "parked".
+      window.__countOverFrames = (frames, timeoutMs = 2000) => {
+        const before = window.__rafCount;
+        let native = 0;
+        const finish = () => ({ extensionFrames: window.__rafCount - before, nativeFrames: native });
+        return new Promise((done) => {
+          const timer = setTimeout(() => done(finish()), timeoutMs);
+          const step = () => {
+            if (++native >= frames) { clearTimeout(timer); return done(finish()); }
+            nativeRaf(step);
+          };
+          nativeRaf(step);
+        });
+      };
+
       window.__probe = () => ({
-        time: Number(time.toFixed(2)),
-        paused,
-        volume: Number(v.volume.toFixed(3)),
-        muted: v.muted,
+        feed: { t: Number(document.getElementById("v").currentTime.toFixed(2)), paused: document.getElementById("v").paused, muted: document.getElementById("v").muted, volume: Number(document.getElementById("v").volume.toFixed(2)) },
+        modalVid: { t: Number(document.getElementById("v2").currentTime.toFixed(2)), paused: document.getElementById("v2").paused, muted: document.getElementById("v2").muted },
         leaks: document.getElementById("log").textContent.split("\n").filter((l) => l.startsWith("LEAK")),
         overlay: (() => {
           const host = document.querySelector("igvc-overlay");
           if (!host) return null;
           const r = host.getBoundingClientRect();
-          const wrap = host.shadowRoot.querySelector(".wrap");
+          const sr = host.shadowRoot;
           return {
             rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)],
-            visible: wrap.classList.contains("on"),
+            visible: sr.querySelector(".wrap").classList.contains("on"),
             parent: host.parentElement.tagName + (host.parentElement.id ? "#" + host.parentElement.id : ""),
-            time: host.shadowRoot.querySelector(".cur").textContent + " / " + host.shadowRoot.querySelector(".dur").textContent,
-            fillWidth: host.shadowRoot.querySelector(".seek .fill").style.width,
+            time: sr.querySelector(".cur").textContent + " / " + sr.querySelector(".dur").textContent,
+            seekDisabled: sr.querySelector(".seek").classList.contains("disabled"),
           };
         })(),
+        rects: {
+          feed: (() => { const r = document.getElementById("v").getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; })(),
+          modal: (() => { const r = document.getElementById("v2").getBoundingClientRect(); return [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]; })(),
+        },
       });
     </script>
     <script src="/content.js"></script>

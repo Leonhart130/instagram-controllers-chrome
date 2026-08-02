@@ -65,6 +65,12 @@ export const BAR_CSS = `
 }
 .seek:hover .thumb, .seek.dragging .thumb { opacity: 1; transform: scale(1); }
 
+/* Live streams and video whose metadata has not landed yet: say so rather than
+   swallowing the click. */
+.seek.disabled { cursor: default; opacity: .45; }
+.seek.disabled:hover .track { height: 3px; }
+.seek.disabled .thumb { display: none; }
+
 /* ---- control row ---- */
 .row {
   display: flex;

@@ -10,17 +10,24 @@
  *     never reach Instagram's play/pause and mute handlers.
  * The exception is fullscreen, where the host is moved into the fullscreen
  * element (nothing outside it renders) and switched to absolute positioning.
+ * That does put it inside Instagram's tree, so the mount is re-checked each
+ * frame rather than only on attach.
  */
 
 import { ICONS } from "./icons";
 import { BAR_CSS } from "./styles";
-import { toggleFullscreen, unmark } from "./fullscreen";
+import { fullscreenVideo, toggleFullscreen, unmark } from "./fullscreen";
+import { markUserIntent } from "./registry";
 
 const HOST_TAG = "igvc-overlay";
 const Z_INDEX = 2147483000;
+/** Below this much of the video on screen there is nowhere to put the bar. */
+const MIN_VISIBLE_HEIGHT = 56;
+const MIN_VISIBLE_WIDTH = 80;
 
 const BASE_HOST_CSS = [
   "display:block",
+  "position:fixed",
   "margin:0",
   "padding:0",
   "border:0",
@@ -37,6 +44,23 @@ function formatTime(seconds: number): string {
   const s = total % 60;
   const mm = h > 0 ? String(m).padStart(2, "0") : String(m);
   return `${h > 0 ? `${h}:` : ""}${mm}:${String(s).padStart(2, "0")}`;
+}
+
+/**
+ * How long the video is, as far as seeking is concerned.
+ *
+ * Instagram serves MSE/blob-backed video, where duration is NaN until metadata
+ * lands and Infinity for anything live. Falling back to the seekable range keeps
+ * the scrubber usable instead of showing a dead 0:00.
+ */
+function usableDuration(video: HTMLVideoElement): number {
+  if (Number.isFinite(video.duration) && video.duration > 0) return video.duration;
+  const seekable = video.seekable;
+  if (seekable && seekable.length > 0) {
+    const end = seekable.end(seekable.length - 1);
+    if (Number.isFinite(end) && end > 0) return end;
+  }
+  return 0;
 }
 
 function ratioFrom(event: PointerEvent, track: HTMLElement): number {
@@ -80,7 +104,20 @@ interface Painted {
   volume: number;
   muted: boolean | null;
   fullscreen: boolean | null;
+  seekable: boolean | null;
 }
+
+const BLANK: Painted = {
+  paused: null,
+  current: "",
+  duration: "",
+  progress: -1,
+  buffered: -1,
+  volume: -1,
+  muted: null,
+  fullscreen: null,
+  seekable: null,
+};
 
 class ControlBar {
   readonly host: HTMLElement;
@@ -104,18 +141,9 @@ class ControlBar {
   video: HTMLVideoElement | null = null;
   private visible = false;
   private inFullscreen = false;
-  private dragging: "seek" | "volume" | null = null;
+  private dragging: { kind: "seek" | "volume"; pointerId: number } | null = null;
   private raf = 0;
-  private painted: Painted = {
-    paused: null,
-    current: "",
-    duration: "",
-    progress: -1,
-    buffered: -1,
-    volume: -1,
-    muted: null,
-    fullscreen: null,
-  };
+  private painted: Painted = { ...BLANK };
 
   constructor() {
     this.host = document.createElement(HOST_TAG);
@@ -161,37 +189,29 @@ class ControlBar {
   // ---------------------------------------------------------------- lifecycle
 
   attachTo(video: HTMLVideoElement): void {
-    if (this.video === video) return;
-    this.video = video;
-    this.painted = {
-      paused: null,
-      current: "",
-      duration: "",
-      progress: -1,
-      buffered: -1,
-      volume: -1,
-      muted: null,
-      fullscreen: null,
-    };
-    if (!this.host.isConnected) document.body.appendChild(this.host);
-    if (!this.raf) this.raf = requestAnimationFrame(this.tick);
+    if (this.video !== video) {
+      this.video = video;
+      this.painted = { ...BLANK };
+    }
+    this.ensureMounted();
+    this.start();
   }
 
   detach(): void {
     this.video = null;
     this.dragging = null;
     this.hide();
-    if (this.raf) {
-      cancelAnimationFrame(this.raf);
-      this.raf = 0;
-    }
+    this.stop();
   }
 
   show(): void {
-    if (this.visible) return;
-    this.visible = true;
-    this.wrap.classList.add("on");
-    this.host.style.setProperty("visibility", "visible", "important");
+    if (!this.visible) {
+      this.visible = true;
+      this.wrap.classList.add("on");
+      this.host.style.setProperty("visibility", "visible", "important");
+    }
+    // The loop parks itself while hidden, so showing has to wake it.
+    this.start();
   }
 
   hide(): void {
@@ -202,36 +222,82 @@ class ControlBar {
     this.host.style.setProperty("visibility", "hidden", "important");
   }
 
+  private start(): void {
+    if (!this.raf) this.raf = requestAnimationFrame(this.tick);
+  }
+
+  private stop(): void {
+    if (this.raf) cancelAnimationFrame(this.raf);
+    this.raf = 0;
+  }
+
+  /** In fullscreen the host lives inside Instagram's tree, where React may
+   *  remove it, so the mount is re-checked rather than assumed. */
+  private ensureMounted(): void {
+    const target = (this.inFullscreen ? document.fullscreenElement : null) ?? document.body;
+    if (this.host.parentNode !== target) target.appendChild(this.host);
+  }
+
   // ------------------------------------------------------------- render loop
 
   private tick = (): void => {
-    this.raf = requestAnimationFrame(this.tick);
     const video = this.video;
-    if (!video) return;
+    if (!video) {
+      this.raf = 0;
+      return;
+    }
     if (!video.isConnected) {
       this.detach();
       return;
     }
-    if (!this.inFullscreen) this.syncRect(video);
-    if (this.visible) this.syncState(video);
-  };
-
-  /** Follows the video's on-screen box. Runs every frame — scroll, resize and
-   *  Instagram's own layout shifts all come for free. */
-  private syncRect(video: HTMLVideoElement): void {
-    const r = video.getBoundingClientRect();
-    const offscreen =
-      r.width < 1 || r.height < 1 || r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth;
-    if (offscreen) {
-      this.hide();
+    // Park the loop when there is nothing to draw. Without this, one hover
+    // leaves a forced layout flush running every frame for the life of the page.
+    if (!this.visible && !this.dragging) {
+      this.raf = 0;
       return;
     }
+
+    this.ensureMounted();
+    if (!this.inFullscreen && !this.syncRect(video)) {
+      this.raf = 0;
+      return;
+    }
+    this.syncState(video);
+    this.raf = requestAnimationFrame(this.tick);
+  };
+
+  /**
+   * Follows the video's on-screen box, clamped to the viewport.
+   *
+   * Clamping matters: the bar sits at the bottom of the host, so on a short
+   * window a tall feed video whose bottom is below the fold would render its
+   * controls entirely off-screen, and hovering it would appear to do nothing.
+   *
+   * Returns false when there is nowhere sensible to draw.
+   */
+  private syncRect(video: HTMLVideoElement): boolean {
+    const r = video.getBoundingClientRect();
+    const left = Math.max(0, Math.round(r.left));
+    const top = Math.max(0, Math.round(r.top));
+    const right = Math.min(innerWidth, Math.round(r.right));
+    const bottom = Math.min(innerHeight, Math.round(r.bottom));
+    const width = right - left;
+    const height = bottom - top;
+
+    if (width < MIN_VISIBLE_WIDTH || height < MIN_VISIBLE_HEIGHT) {
+      this.hide();
+      return false;
+    }
+
     const s = this.host.style;
     s.setProperty("position", "fixed", "important");
-    s.setProperty("left", `${Math.round(r.left)}px`, "important");
-    s.setProperty("top", `${Math.round(r.top)}px`, "important");
-    s.setProperty("width", `${Math.round(r.width)}px`, "important");
-    s.setProperty("height", `${Math.round(r.height)}px`, "important");
+    s.setProperty("left", `${left}px`, "important");
+    s.setProperty("top", `${top}px`, "important");
+    // Derived from the rounded edges, so the bar cannot end up a hairline
+    // wider or narrower than the video at fractional zoom levels.
+    s.setProperty("width", `${width}px`, "important");
+    s.setProperty("height", `${height}px`, "important");
+    return true;
   }
 
   private syncState(video: HTMLVideoElement): void {
@@ -243,10 +309,16 @@ class ControlBar {
       this.playBtn.setAttribute("aria-label", video.paused ? "Play" : "Pause");
     }
 
-    const duration = Number.isFinite(video.duration) ? video.duration : 0;
-    const progress = duration > 0 ? video.currentTime / duration : 0;
+    const duration = usableDuration(video);
+    const seekable = duration > 0;
+    if (p.seekable !== seekable) {
+      p.seekable = seekable;
+      this.seek.classList.toggle("disabled", !seekable);
+      this.seek.setAttribute("aria-disabled", String(!seekable));
+    }
 
-    if (this.dragging !== "seek" && Math.abs(progress - p.progress) > 0.0005) {
+    const progress = seekable ? video.currentTime / duration : 0;
+    if (this.dragging?.kind !== "seek" && Math.abs(progress - p.progress) > 0.0005) {
       p.progress = progress;
       this.paintSeek(progress);
     }
@@ -256,13 +328,14 @@ class ControlBar {
       p.current = current;
       this.curEl.textContent = current;
     }
-    const dur = formatTime(duration);
+    const dur = seekable ? formatTime(duration) : "--:--";
     if (dur !== p.duration) {
       p.duration = dur;
       this.durEl.textContent = dur;
     }
 
-    const buffered = duration > 0 && video.buffered.length > 0 ? video.buffered.end(video.buffered.length - 1) / duration : 0;
+    const buffered =
+      seekable && video.buffered.length > 0 ? video.buffered.end(video.buffered.length - 1) / duration : 0;
     if (Math.abs(buffered - p.buffered) > 0.002) {
       p.buffered = buffered;
       this.seekBuffered.style.width = `${Math.min(100, buffered * 100)}%`;
@@ -299,7 +372,11 @@ class ControlBar {
     // Our host sits outside React's root so nothing leaks, but stop it anyway.
     // Bubble phase, deliberately: a capture-phase stopPropagation() here would
     // fire before the event reached our own buttons and kill every control.
-    for (const type of ["pointerdown", "mousedown", "click", "dblclick", "wheel"] as const) {
+    // keydown/keyup are in the list because clicking a control focuses it, and
+    // a subsequent Space would otherwise both activate the button and reach
+    // Instagram's own shortcut handler.
+    const isolated = ["pointerdown", "mousedown", "click", "dblclick", "wheel", "keydown", "keyup"] as const;
+    for (const type of isolated) {
       this.wrap.addEventListener(type, (e) => e.stopPropagation());
     }
 
@@ -315,6 +392,7 @@ class ControlBar {
       e.preventDefault();
       const video = this.video;
       if (!video) return;
+      markUserIntent();
       if (video.muted && video.volume === 0) video.volume = 0.5;
       video.muted = !video.muted;
     });
@@ -326,14 +404,17 @@ class ControlBar {
 
     this.bindSlider(this.seek, this.seekTrack, "seek", (ratio) => {
       const video = this.video;
-      if (!video || !Number.isFinite(video.duration) || video.duration <= 0) return;
+      if (!video) return;
+      const duration = usableDuration(video);
+      if (duration <= 0) return;
       this.paintSeek(ratio);
-      video.currentTime = ratio * video.duration;
+      video.currentTime = ratio * duration;
     });
 
     this.bindSlider(this.volSlider, this.volTrack, "volume", (ratio) => {
       const video = this.video;
       if (!video) return;
+      markUserIntent();
       video.volume = ratio;
       video.muted = ratio === 0;
     });
@@ -350,23 +431,26 @@ class ControlBar {
     surface.addEventListener("pointerdown", (e) => {
       if (e.button !== 0) return;
       e.preventDefault();
-      this.dragging = kind;
+      this.dragging = { kind, pointerId: e.pointerId };
       surface.classList.add("dragging");
       surface.setPointerCapture(e.pointerId);
       apply(ratioFrom(e, track));
     });
 
     surface.addEventListener("pointermove", (e) => {
-      if (this.dragging !== kind) return;
+      if (this.dragging?.kind !== kind || this.dragging.pointerId !== e.pointerId) return;
       e.preventDefault();
       apply(ratioFrom(e, track));
     });
 
+    // Always release this surface, whichever slider currently owns `dragging`.
+    // With two pointers down, keying the cleanup off the shared field left a
+    // slider stuck in .dragging and isInteracting permanently true, which froze
+    // the bar on one video for the rest of the session.
     const end = (e: PointerEvent) => {
-      if (this.dragging !== kind) return;
-      this.dragging = null;
       surface.classList.remove("dragging");
       if (surface.hasPointerCapture(e.pointerId)) surface.releasePointerCapture(e.pointerId);
+      if (this.dragging?.pointerId === e.pointerId) this.dragging = null;
     };
     surface.addEventListener("pointerup", end);
     surface.addEventListener("pointercancel", end);
@@ -374,12 +458,20 @@ class ControlBar {
 
   private onFullscreenChange = (): void => {
     const fsElement = document.fullscreenElement as HTMLElement | null;
-    const owned = !!(fsElement && this.video && fsElement.contains(this.video));
+    // Ask fullscreen.ts which video it put up, not this.video: the transition
+    // takes hundreds of milliseconds, and a React re-render in that window can
+    // detach the bar and null this.video, which used to leave the bar mounted
+    // outside the fullscreen element where nothing renders.
+    const fsVideo = fullscreenVideo();
+    // fsElement !== fsVideo matters because contains() is reflexive: on the
+    // fallback path that fullscreens the <video> itself, the bar would be
+    // appended inside a <video>, where children never render.
+    const owned = !!(fsElement && fsVideo && fsElement !== fsVideo && fsElement.contains(fsVideo));
 
-    if (owned && fsElement) {
+    if (owned && fsElement && fsVideo) {
       this.inFullscreen = true;
       this.host.classList.add("fs");
-      fsElement.appendChild(this.host);
+      this.attachTo(fsVideo);
       const s = this.host.style;
       s.setProperty("position", "absolute", "important");
       for (const side of ["left", "top", "right", "bottom"] as const) {
@@ -394,7 +486,8 @@ class ControlBar {
     this.inFullscreen = false;
     this.host.classList.remove("fs");
     for (const side of ["right", "bottom"] as const) this.host.style.removeProperty(side);
-    if (this.host.parentElement !== document.body) document.body.appendChild(this.host);
+    this.host.style.setProperty("position", "fixed", "important");
+    this.ensureMounted();
     if (!document.fullscreenElement) unmark();
   };
 }

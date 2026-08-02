@@ -8,17 +8,42 @@
  */
 
 import { prefs } from "./prefs";
+import { isEnabledHere } from "./surface";
 
 const videos = new Set<HTMLVideoElement>();
 const listeners = new WeakMap<HTMLVideoElement, AbortController>();
-/** Set while we are the ones writing to .volume/.muted, to ignore our own events. */
-const applying = new WeakSet<HTMLVideoElement>();
+/** The exact values we last wrote, so we can recognise our own volumechange. */
+const written = new WeakMap<HTMLVideoElement, { volume: number; muted: boolean }>();
 /** Guards against a ping-pong war if Instagram insists on re-muting. */
 const reasserts = new WeakMap<HTMLVideoElement, number>();
+const replayTimers = new WeakMap<HTMLVideoElement, number>();
 const MAX_REASSERTS = 3;
+
+/** The video the control bar is pointing at — the only one allowed to make sound. */
+let active: HTMLVideoElement | null = null;
+let intentUntil = 0;
 
 export function getVideos(): ReadonlySet<HTMLVideoElement> {
   return videos;
+}
+
+/**
+ * Called by our own controls before they change volume or mute.
+ *
+ * navigator.userActivation.isActive cannot do this job: it stays true for ~5s
+ * after *any* gesture anywhere on the page, so an automatic Instagram re-mute
+ * that lands in that window would be recorded as the user's preference and
+ * persisted.
+ */
+export function markUserIntent(): void {
+  intentUntil = performance.now() + 500;
+}
+
+export function setActiveVideo(video: HTMLVideoElement | null): void {
+  if (active === video) return;
+  active = video;
+  // The old active video has to be re-muted and the new one un-muted.
+  for (const v of videos) applyPrefs(v);
 }
 
 export function scan(): void {
@@ -36,12 +61,20 @@ function adopt(video: HTMLVideoElement): void {
   listeners.set(video, ac);
   videos.add(video);
 
-  video.addEventListener("loadedmetadata", () => applyPrefs(video), opts);
+  video.addEventListener("loadedmetadata", () => {
+    // A fresh load is a new fight, not a continuation of the old one.
+    reasserts.delete(video);
+    applyPrefs(video);
+  }, opts);
+
   video.addEventListener("play", () => {
+    reasserts.delete(video);
     applyPrefs(video);
     // Instagram sometimes mutes a beat after playback starts.
-    window.setTimeout(() => applyPrefs(video), 200);
+    clearTimeout(replayTimers.get(video));
+    replayTimers.set(video, window.setTimeout(() => applyPrefs(video), 200));
   }, opts);
+
   video.addEventListener("volumechange", () => onVolumeChange(video), opts);
 
   applyPrefs(video);
@@ -50,30 +83,44 @@ function adopt(video: HTMLVideoElement): void {
 function forget(video: HTMLVideoElement): void {
   listeners.get(video)?.abort();
   listeners.delete(video);
+  clearTimeout(replayTimers.get(video));
+  replayTimers.delete(video);
   videos.delete(video);
+  if (active === video) active = null;
 }
 
 function applyPrefs(video: HTMLVideoElement): void {
+  // The bar is off on this surface, so our preferences have no business
+  // unmuting anything here either.
+  if (!isEnabledHere()) return;
+
   const { volume, muted } = prefs.current;
   // Unmuting without a user gesture makes Chrome's autoplay policy stop the
   // video, so only restore an unmuted state once the tab has been interacted with.
   const mayUnmute = navigator.userActivation?.hasBeenActive ?? false;
-  const targetMuted = muted ? true : mayUnmute ? false : video.muted;
+  // Only the video the bar is on may play sound: Instagram autoplays several
+  // posts at once as they enter the viewport, and unmuting all of them means
+  // three soundtracks at the same time.
+  const targetMuted = muted || video !== active ? true : mayUnmute ? false : video.muted;
 
   if (Math.abs(video.volume - volume) < 0.001 && video.muted === targetMuted) return;
 
-  applying.add(video);
+  written.set(video, { volume, muted: targetMuted });
   if (Math.abs(video.volume - volume) >= 0.001) video.volume = volume;
   if (video.muted !== targetMuted) video.muted = targetMuted;
-  window.setTimeout(() => applying.delete(video), 0);
 }
 
 function onVolumeChange(video: HTMLVideoElement): void {
-  if (applying.has(video)) return;
+  // Our own write coming back to us. Matching on the exact values rather than a
+  // flag released on a timer, because volumechange is a media-element task and
+  // a timer is a different task source with no defined ordering between them.
+  const ours = written.get(video);
+  if (ours && Math.abs(video.volume - ours.volume) < 0.001 && video.muted === ours.muted) {
+    written.delete(video);
+    return;
+  }
 
-  // A recent user gesture means a human moved it — either our bar or Instagram's
-  // own mute button. Either way, that is the new preference.
-  if (navigator.userActivation?.isActive) {
+  if (performance.now() < intentUntil) {
     prefs.update({ volume: video.volume, muted: video.muted });
     reasserts.delete(video);
     return;

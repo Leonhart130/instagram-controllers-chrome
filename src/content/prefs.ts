@@ -30,12 +30,18 @@ export const prefs = {
 
   async load(): Promise<void> {
     if (!storageAvailable()) return;
+    // Registered before the read, so a failing first get() cannot leave
+    // cross-tab sync silently unwired.
     try {
-      const stored = await chrome.storage.sync.get(KEY);
-      if (stored?.[KEY]) cache = sanitize(stored[KEY]);
       chrome.storage.onChanged.addListener((changes, area) => {
         if (area === "sync" && changes[KEY]) cache = sanitize(changes[KEY].newValue);
       });
+    } catch {
+      /* extension context unavailable */
+    }
+    try {
+      const stored = await chrome.storage.sync.get(KEY);
+      if (stored?.[KEY]) cache = sanitize(stored[KEY]);
     } catch {
       /* first run, or storage unavailable — defaults are fine */
     }
