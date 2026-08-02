@@ -27,7 +27,8 @@ const ENABLED = new Set<Surface>(["feed", "post", "reels", "reel"]);
 export function surfaceOf(path: string = location.pathname): Surface {
   if (path === "/" || path === "") return "feed";
   if (/^\/p\/[^/]+/.test(path)) return "post";
-  if (/^\/reels(\/|$)/.test(path)) return "reels";
+  // The player feed only. /reels/audio/<id>/ is a thumbnail grid.
+  if (/^\/reels\/?$/.test(path)) return "reels";
   if (/^\/reel\/[^/]+/.test(path)) return "reel";
   if (/^\/stories(\/|$)/.test(path)) return "stories";
   if (/^\/direct(\/|$)/.test(path)) return "direct";

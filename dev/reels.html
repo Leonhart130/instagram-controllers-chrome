@@ -9,6 +9,7 @@
       /* Reels are a snap-scrolling column of full-viewport items. Scrolling from
          one to the next changes which video is under a motionless pointer,
          which is the behaviour this fixture exists to reproduce. */
+      .reel { text-decoration: none; color: inherit; }
       #feed { height: 100vh; overflow-y: scroll; scroll-snap-type: y mandatory; }
       .reel {
         position: relative;
@@ -48,16 +49,19 @@
   </head>
   <body>
     <div id="feed">
-      <div class="reel" id="reel0">
+      <!-- Reels are wrapped in a link too. This is the surface the only
+           production bug was reported on, so the fixture that omits the anchor
+           is the one that cannot detect a preventDefault regression. -->
+      <a class="reel" id="reel0" href="#reel-FAKE0">
         <video id="v" src="/clip.webm" preload="auto" playsinline loop></video>
         <div class="catcher" data-reel="0"></div>
         <div class="igprogress"><i></i></div>
-      </div>
-      <div class="reel" id="reel1">
+      </a>
+      <a class="reel" id="reel1" href="#reel-FAKE1">
         <video id="v2" src="/clip.webm" preload="auto" playsinline loop></video>
         <div class="catcher" data-reel="1"></div>
         <div class="igprogress"><i></i></div>
-      </div>
+      </a>
     </div>
 
     <div id="log">reels harness</div>
@@ -74,6 +78,10 @@
       for (const c of document.querySelectorAll(".catcher")) {
         c.addEventListener("click", () => log("LEAK: catcher " + c.dataset.reel));
       }
+      window.addEventListener("hashchange", () => {
+        log("LEAK: navigated to " + location.hash);
+        history.replaceState(null, "", location.pathname);
+      });
 
       const ready = (el) =>
         el.readyState >= 1
@@ -90,6 +98,9 @@
       window.__resetLog = () => { document.getElementById("log").textContent = "reels harness"; };
       /** Snap to a reel the way the scroll container does, with no pointer movement. */
       window.__scrollToReel = (i) => { feed.scrollTop = i * feed.clientHeight; };
+      /** What Instagram does once the snap settles: commit the reel's URL.
+       *  Deliberately AFTER the last scroll event, with the pointer parked. */
+      window.__commitReelUrl = (i) => history.replaceState(null, "", `/reel/FAKE${i}/`);
       window.__playBoth = async () => { await v.play().catch(() => {}); await v2.play().catch(() => {}); };
 
       window.__probe = () => ({

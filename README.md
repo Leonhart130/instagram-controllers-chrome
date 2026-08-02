@@ -45,7 +45,7 @@ npm run typecheck  # tsc --noEmit
 npm run serve      # dev server for the harness (http :8731, https :8732)
 npm run fixture    # one-off: put a real .webm at .fixtures/clip.webm
                    #   npm run fixture -- /path/to/any-short-clip.webm
-npm run check      # build, then all three suites below (52 checks)
+npm run check      # build, then all three suites below (57 checks)
 npm run harness    # main-world checks against the harness
 npm run reels      # reels-specific checks (snap-scroll retargeting)
 npm run e2e        # drive the built extension in a throwaway browser

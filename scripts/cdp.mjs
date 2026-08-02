@@ -148,14 +148,26 @@ export async function requireServer(port, { tls = false } = {}) {
 
 export class Checks {
   #results = [];
+  #browser = null;
+  #cleanup = null;
 
   constructor(watchdogMs = 120000) {
     const t = setTimeout(() => {
       console.error(`\nwatchdog: nothing finished within ${watchdogMs / 1000}s`);
+      // Kill the browser too. Exiting without this orphans a headless Brave and
+      // its profile directory, and repeated hangs accumulate them.
+      this.#browser?.kill("SIGKILL");
+      this.#cleanup?.();
       process.exit(2);
     }, watchdogMs);
     t.unref();
     this.watchdog = t;
+  }
+
+  /** Register the browser so the watchdog can take it down with the process. */
+  track(proc, cleanup) {
+    this.#browser = proc;
+    this.#cleanup = cleanup;
   }
 
   /** ok === null means "could not run" — never reported as a pass. */

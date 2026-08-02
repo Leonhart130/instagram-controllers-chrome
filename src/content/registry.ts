@@ -30,19 +30,26 @@ const MAX_REASSERTS = 3;
 /** The video the control bar is pointing at — the only one allowed to make sound. */
 let active: HTMLVideoElement | null = null;
 /**
- * While our own controls are driving a video, ignore changes we cannot account
- * for instead of fighting them. Dragging the volume slider queues a burst of
- * writes, and an event from an earlier write arriving after a later one has
- * been recorded would otherwise read as the page interfering.
+ * While our own volume control is driving a video, ignore volume changes we
+ * cannot account for instead of fighting them: dragging the slider queues a
+ * burst of writes, and an event from an earlier write arriving after a later
+ * one was recorded would otherwise read as the page interfering.
+ *
+ * Volume only. Speed has no burst — one menu click is exactly one write, and
+ * its echo is already matched by `wroteRate` — so a window there would buy
+ * nothing and cost a period in which a page reset is ignored *and never
+ * corrected*. Sharing one map between the two was worse still: setting the
+ * speed silenced the mute defence for the whole window, which is the one thing
+ * this extension exists to do.
  *
  * This can only ever delay a correction — never record a preference — which is
  * the difference between it and the intent window it replaced.
  */
-const driving = new WeakMap<HTMLVideoElement, number>();
+const drivingVolume = new WeakMap<HTMLVideoElement, number>();
 const DRIVING_MS = 400;
 
-function isDriving(video: HTMLVideoElement): boolean {
-  return performance.now() < (driving.get(video) ?? 0);
+function isDrivingVolume(video: HTMLVideoElement): boolean {
+  return performance.now() < (drivingVolume.get(video) ?? 0);
 }
 
 export function getVideos(): ReadonlySet<HTMLVideoElement> {
@@ -65,7 +72,9 @@ export function getVideos(): ReadonlySet<HTMLVideoElement> {
  * that is the right way round.
  */
 export function setVolume(video: HTMLVideoElement, volume: number, muted: boolean): void {
-  driving.set(video, performance.now() + DRIVING_MS);
+  drivingVolume.set(video, performance.now() + DRIVING_MS);
+  // The user acting is the strongest possible "this is a new fight" signal.
+  reasserts.delete(video);
   const volumeChanges = Math.abs(video.volume - volume) >= 0.001;
   const muteChanges = video.muted !== muted;
   if (volumeChanges || muteChanges) {
@@ -78,12 +87,13 @@ export function setVolume(video: HTMLVideoElement, volume: number, muted: boolea
 
 /** Change playback speed on behalf of the user. See setVolume. */
 export function setSpeed(video: HTMLVideoElement, rate: number): void {
-  driving.set(video, performance.now() + DRIVING_MS);
-  if (Math.abs(video.playbackRate - rate) >= 0.001) {
-    wroteRate.set(video, rate);
-    video.playbackRate = rate;
-  }
+  rateReasserts.delete(video);
   prefs.update({ speed: rate });
+  // Every video, not just this one — otherwise a neighbour already mounted and
+  // playing keeps the old rate until it next fires `play`, which for a looping
+  // reel is never.
+  for (const v of videos) applyRate(v);
+  if (!videos.has(video)) applyRate(video);
 }
 
 export function setActiveVideo(video: HTMLVideoElement | null): void {
@@ -93,13 +103,36 @@ export function setActiveVideo(video: HTMLVideoElement | null): void {
   for (const v of videos) applyPrefs(v);
 }
 
-export function scan(): void {
+/**
+ * The autoplay policy gate opens on the first user gesture. Nothing else
+ * re-runs the mute decision at that moment — `setActiveVideo` early-returns
+ * when the video is already active — so a stored unmute preference would sit
+ * unapplied until the video happened to fire `play` or `loadedmetadata` again.
+ */
+let gestureSeen = false;
+function onFirstGesture(): void {
+  if (gestureSeen) return;
+  gestureSeen = true;
+  for (const video of videos) applyPrefs(video);
+}
+document.addEventListener("pointerdown", onFirstGesture, { capture: true });
+document.addEventListener("keydown", onFirstGesture, { capture: true });
+
+export function scan(): boolean {
+  let changed = false;
   for (const video of document.querySelectorAll("video")) {
-    if (!videos.has(video)) adopt(video);
+    if (!videos.has(video)) {
+      adopt(video);
+      changed = true;
+    }
   }
   for (const video of videos) {
-    if (!video.isConnected) forget(video);
+    if (!video.isConnected) {
+      forget(video);
+      changed = true;
+    }
   }
+  return changed;
 }
 
 function adopt(video: HTMLVideoElement): void {
@@ -145,10 +178,12 @@ function forget(video: HTMLVideoElement): void {
   if (active === video) active = null;
 }
 
-function applyPrefs(video: HTMLVideoElement): void {
+/** Returns whether it actually wrote anything, so a caller can tell a real
+ *  fight from a no-op. */
+function applyPrefs(video: HTMLVideoElement): boolean {
   // The bar is off on this surface, so our preferences have no business
   // unmuting anything here either.
-  if (!isEnabledHere()) return;
+  if (!isEnabledHere()) return false;
 
   const { volume, muted } = prefs.current;
   // Unmuting without a user gesture makes Chrome's autoplay policy stop the
@@ -161,7 +196,7 @@ function applyPrefs(video: HTMLVideoElement): void {
 
   const volumeChanges = Math.abs(video.volume - volume) >= 0.001;
   const muteChanges = video.muted !== targetMuted;
-  if (!volumeChanges && !muteChanges) return;
+  if (!volumeChanges && !muteChanges) return false;
 
   // One event per property, so record how many to expect back.
   written.set(video, {
@@ -171,6 +206,7 @@ function applyPrefs(video: HTMLVideoElement): void {
   });
   if (volumeChanges) video.volume = volume;
   if (muteChanges) video.muted = targetMuted;
+  return true;
 }
 
 /**
@@ -180,12 +216,13 @@ function applyPrefs(video: HTMLVideoElement): void {
  * exactly what "I set 1.5x" should mean — and no autoplay policy to satisfy,
  * so no user-activation gate is needed.
  */
-function applyRate(video: HTMLVideoElement): void {
-  if (!isEnabledHere()) return;
+function applyRate(video: HTMLVideoElement): boolean {
+  if (!isEnabledHere()) return false;
   const { speed } = prefs.current;
-  if (Math.abs(video.playbackRate - speed) < 0.001) return;
+  if (Math.abs(video.playbackRate - speed) < 0.001) return false;
   wroteRate.set(video, speed);
   video.playbackRate = speed;
+  return true;
 }
 
 function onRateChange(video: HTMLVideoElement): void {
@@ -194,11 +231,11 @@ function onRateChange(video: HTMLVideoElement): void {
     wroteRate.delete(video);
     return;
   }
-  if (isDriving(video)) return;
   const count = rateReasserts.get(video) ?? 0;
   if (count >= MAX_REASSERTS) return;
-  rateReasserts.set(video, count + 1);
-  applyRate(video);
+  // Only a reassert that actually wrote something counts against the budget,
+  // or the page's routine churn exhausts it before the first real fight.
+  if (applyRate(video)) rateReasserts.set(video, count + 1);
 }
 
 function onVolumeChange(video: HTMLVideoElement): void {
@@ -211,10 +248,9 @@ function onVolumeChange(video: HTMLVideoElement): void {
     return;
   }
 
-  if (isDriving(video)) return;
+  if (isDrivingVolume(video)) return;
 
   const count = reasserts.get(video) ?? 0;
   if (count >= MAX_REASSERTS) return;
-  reasserts.set(video, count + 1);
-  applyPrefs(video);
+  if (applyPrefs(video)) reasserts.set(video, count + 1);
 }

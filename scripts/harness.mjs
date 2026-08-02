@@ -314,6 +314,55 @@ async function main() {
       check("speed is put back when the page resets it", null, "menu never opened");
     }
 
+    // --- 5b. the menu must be reachable on a SHORT video --------------------
+    // getBoundingClientRect reports the layout rect and knows nothing about an
+    // ancestor's overflow:hidden, so "is the menu inside the viewport" cannot
+    // see a menu clipped away by .root. Assert against the host's box instead,
+    // on a video short enough for a menu that grows upward to have nowhere to go.
+    const short = await cdp.eval(`
+      window.__setMediaHeight(200);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const r = document.getElementById('v').getBoundingClientRect();
+      return { h: Math.round(r.height), x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+    `);
+    check("the post really is short (so this test discriminates)", short.h <= 220, `media height ${short.h}`);
+    await cdp.mouseMove(2, 2);
+    await sleep(200);
+    await cdp.mouseMove(short.x, short.y);
+    await cdp.mouseMove(short.x + 1, short.y + 1);
+    await sleep(400);
+    const clipped = await cdp.eval(`
+      const host = document.querySelector('igvc-overlay');
+      const sr = host.shadowRoot;
+      const btn = sr.querySelector('.rate');
+      const br = btn.getBoundingClientRect();
+      btn.click();
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const menu = sr.querySelector('.ratemenu');
+      if (menu.hidden) return { open: false };
+      const hostRect = host.getBoundingClientRect();
+      const menuRect = menu.getBoundingClientRect();
+      const inside = (r) => r.top >= hostRect.top - 1 && r.bottom <= hostRect.bottom + 1;
+      // The menu scrolls (focusing the checked item scrolls it), so "is item 0
+      // in the box right now" is the wrong question — it is legitimately
+      // scrolled out. The right one is whether every item can be BROUGHT into
+      // the box, which is what a clipped menu makes impossible.
+      menu.scrollTop = 0;
+      const first = menu.children[0].getBoundingClientRect();
+      menu.scrollTop = menu.scrollHeight;
+      const last = menu.children[menu.children.length - 1].getBoundingClientRect();
+      return { open: true,
+               hostTop: Math.round(hostRect.top), hostBottom: Math.round(hostRect.bottom),
+               menuTop: Math.round(menuRect.top), menuBottom: Math.round(menuRect.bottom),
+               menuInsideHost: inside(menuRect),
+               firstReachable: inside(first), lastReachable: inside(last) };
+    `);
+    check("every speed option can be reached on a short video",
+      clipped.open === true && clipped.menuInsideHost === true &&
+        clipped.firstReachable === true && clipped.lastReachable === true,
+      JSON.stringify(clipped));
+    await cdp.eval("window.__setMediaHeight(600); document.querySelector('igvc-overlay').shadowRoot.querySelector('.ratemenu').hidden = true; return true;");
+
     // --- 6. the surface gate -----------------------------------------------
     // Both directions, or "it works on reels" is indistinguishable from
     // "it works everywhere and the gate does nothing".

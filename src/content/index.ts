@@ -18,7 +18,10 @@ function scheduleScan(): void {
   requestAnimationFrame(() => {
     scanQueued = false;
     checkNavigation();
-    scan();
+    // A video appearing or disappearing changes the answer to "what is under
+    // the pointer" without the pointer moving. Instagram virtualises the feed
+    // and reels, so this is the ordinary case, not an edge one.
+    if (scan()) scheduleHover();
   });
 }
 
@@ -26,6 +29,10 @@ function checkNavigation(): void {
   if (!consumeLocationChange()) return;
   bar.detach();
   setActiveVideo(null);
+  // Detaching without re-evaluating is how the bar disappeared on reels:
+  // scrolling settles, Instagram commits the reel's URL, we detach — and with
+  // the pointer motionless nothing was left to bring the bar back.
+  scheduleHover();
 }
 
 let pointerX = -1;

@@ -165,6 +165,8 @@
       window.__openModal = () => document.getElementById("modal").classList.add("open");
       window.__closeModal = () => document.getElementById("modal").classList.remove("open");
       window.__setSpacer = (px) => { document.getElementById("spacer").style.height = px + "px"; };
+      /** A short post, where a menu growing upward has nowhere to go. */
+      window.__setMediaHeight = (px) => { document.getElementById("media").style.height = px + "px"; };
       // A video taken out of hit testing, which is an ordinary thing to do when
       // you stack a click-catcher over your media. Without this the fallback in
       // videoAtPoint is only ever exercised in the case where it cannot fail.

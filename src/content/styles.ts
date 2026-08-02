@@ -127,10 +127,10 @@ export const BAR_CSS = `
   border-radius: 10px;
   background: rgba(20, 20, 20, .96);
   box-shadow: 0 6px 20px rgba(0, 0, 0, .5);
-  /* The bar clips to the video box, so a menu growing upwards would be cut off
-     without room made for it. */
-  max-height: 240px;
+  /* max-height is set when the menu opens, from the room the video's box
+     actually leaves above the button — a constant here cannot know that. */
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .ratemenu[hidden] { display: none; }
 .rateitem {

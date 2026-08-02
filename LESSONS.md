@@ -258,3 +258,51 @@ first two both looked obviously correct when written.
   The cost, stated plainly: Instagram's own mute button no longer updates the preference — it is
   treated as the page interfering and put back. For a tool whose whole purpose is that your setting
   survives Instagram resetting it, that is the right way round.
+
+## §10 — ROUND 3
+
+Thirteen findings. Two were user-visible on reels, and four were about checks that could not
+detect what they claimed to certify.
+
+- **10.1 Detaching is not the same as re-deciding.** On reels the bar vanished and stayed gone.
+  Scrolling settles, Instagram commits the reel's URL, `checkNavigation()` detaches — and with the
+  pointer motionless there was nothing left to bring the bar back. Same shape when a virtualised
+  `<video>` is unmounted under a stationary pointer. ⭐ **Every path that drops the bar must also
+  schedule the decision that would put it back**, because the input that normally re-decides
+  (pointer movement) is exactly what is absent.
+
+- **10.2 A retry budget must count fights, not events.** The reassert counter incremented before
+  checking whether anything was written, and `applyPrefs` is a guaranteed no-op before the first
+  user gesture. Instagram's ordinary volume churn therefore spent all three slots for free, and a
+  user clicking unmute did not refresh them. On reels — where the videos `loop`, so `play` never
+  fires again — the budget was never refreshed at all. Symptom: unmute works once, Instagram takes
+  it back, and the extension never fights again, silently, for the life of that element.
+
+- **10.3 One suppression window shared by two properties suppresses the wrong one.** `driving` was
+  set by `setSpeed` and read by `onVolumeChange`, so changing the playback speed left the mute
+  defence deaf for 400ms — the one thing this extension exists to do. Worse, the ignored change was
+  not even counted, so nothing retried. Speed never needed a window at all: one menu click is one
+  write, already matched by `wroteRate`.
+
+- **10.4 `getBoundingClientRect()` cannot see an ancestor's `overflow: hidden`.** `.root` clips to
+  the video's box, so on a post under ~264px the top of the speed menu — 0.25x first — was cut off
+  and unclickable. The check that certified the menu "is on screen" compared its *layout* rect to
+  the viewport, which a fully clipped element still passes. Measured: `menuTop: -17` against a host
+  starting at 71. Assert against the clipping ancestor's box, not the viewport.
+
+- **10.5 A scrollable container makes "is it in view" the wrong question.** The first fix attempt
+  asserted every menu item sat inside the host, and failed — because opening the menu focuses the
+  checked item, which scrolls it. The item was legitimately out of view. The right question for
+  anything scrollable is whether each item can be *brought* into view.
+
+- **10.6 Check the order of your own setup.** The e2e proved an unmute preference survived a reload
+  by clicking, then hovering, then asserting. `setActiveVideo` early-returns when the video is
+  already active, so the reverse order — hover, then first gesture — never re-ran the mute decision
+  and left the video muted forever. The check could not fail because its setup happened to avoid
+  the bug. Swapping two lines turns it red.
+
+- **10.7 A fixture that omits the thing the bug was about cannot find it again.** The reels fixture
+  had no ancestor `<a>` — on the surface where the only production bug was reported, and whose
+  whole mechanism was an anchor's default action. It also quoted an empty leak log without a
+  negative control. Both are §2.1 and §7.3 recurring on a new fixture, which is where they will
+  always recur.

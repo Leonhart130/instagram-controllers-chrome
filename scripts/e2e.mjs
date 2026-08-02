@@ -484,8 +484,17 @@ async function main() {
 
     // Muted until hovered, on purpose: only the video the bar is on may make
     // sound, otherwise a feed autoplaying four posts plays four soundtracks.
-    const beforeHover = await cdp.eval("return document.getElementById('v').muted;");
-    check("videos start muted before the bar picks one", beforeHover === true, `muted=${beforeHover}`);
+    const beforeHover = await cdp.eval(`
+      return { muted: document.getElementById('v').muted,
+               rate: document.getElementById('v').playbackRate };
+    `);
+    check("videos start muted before the bar picks one", beforeHover.muted === true, `muted=${beforeHover.muted}`);
+    // Read BEFORE the gesture and before any hover, which is what the claim is:
+    // nothing in the autoplay policy cares about playbackRate, so speed must be
+    // back without either. Reading it after a hover would also pass for an
+    // implementation that only applied the rate on attach.
+    check("speed preference survives a reload, with no gesture and no hover",
+      Math.abs(beforeHover.rate - 1.5) < 0.001, `playbackRate ${beforeHover.rate}`);
 
     // A gesture is required before restoring an unmuted state — unmuting
     // without one makes Chrome's autoplay policy stop the video. Hovering is
@@ -503,11 +512,6 @@ async function main() {
       afterHover.muted === false,
       `after reload + gesture + hover muted=${afterHover.muted} (hasBeenActive=${afterHover.hasBeenActive})`);
 
-    // Speed needs no user gesture — nothing in the autoplay policy cares about
-    // playbackRate — so it must be back before anything is hovered at all.
-    const speedAfter = await cdp.eval("return document.getElementById('v').playbackRate;");
-    check("speed preference survives a reload", Math.abs(speedAfter - 1.5) < 0.001,
-      `playbackRate ${speedAfter}`);
   } finally {
     cdp?.close();
     proc.kill("SIGKILL");

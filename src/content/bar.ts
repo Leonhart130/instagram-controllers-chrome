@@ -100,8 +100,8 @@ const TEMPLATE = `
     <span class="time"><span class="cur">0:00</span> / <span class="dur">0:00</span></span>
       <span class="spacer"></span>
       <div class="speed">
-        <div class="ratemenu" role="menu" hidden></div>
         <button class="btn rate" type="button" aria-label="Playback speed" aria-haspopup="true" aria-expanded="false">1x</button>
+        <div class="ratemenu" role="menu" hidden></div>
       </div>
       <button class="btn fs" type="button" aria-label="Fullscreen"></button>
     </div>
@@ -457,6 +457,16 @@ class ControlBar {
   private openRateMenu(): void {
     this.rateMenu.hidden = false;
     this.rateBtn.setAttribute("aria-expanded", "true");
+
+    // `.root` clips to the video's box, so on a short post a menu that grows
+    // upward loses its top items — 0.25x first — with no scrollbar and no clue
+    // that anything is missing. Give it exactly the room there is and let it
+    // scroll. A fixed max-height cannot do this: the room depends on the video.
+    const room = this.rateBtn.getBoundingClientRect().top - this.root.getBoundingClientRect().top - 12;
+    this.rateMenu.style.maxHeight = `${Math.max(72, Math.floor(room))}px`;
+
+    const checked = this.rateMenu.querySelector<HTMLElement>(".rateitem.on") ?? this.rateMenu.firstElementChild;
+    (checked as HTMLElement | null)?.focus?.();
   }
 
   private closeRateMenu(): void {
@@ -554,7 +564,7 @@ class ControlBar {
     this.rateBtn.addEventListener("click", () => this.toggleRateMenu());
     // Any other interaction with the bar dismisses it, which is what a menu that
     // overlaps the controls has to do to stay out of the way.
-    this.wrap.addEventListener("pointerdown", (e) => {
+    this.root.addEventListener("pointerdown", (e) => {
       if (!e.composedPath().includes(this.speedWrap())) this.closeRateMenu();
     });
     this.root.addEventListener("keydown", (e) => {
